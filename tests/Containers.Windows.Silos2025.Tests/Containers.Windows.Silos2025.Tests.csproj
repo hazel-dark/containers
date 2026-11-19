@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <DefineConstants>$(DefineConstants);SILO2025</DefineConstants>
+    <IsTestProject>true</IsTestProject>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- Portable tests exercise managed code, ABI declarators and test-only native doubles. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.1" PrivateAssets="all" />
+    <ProjectReference Include="../../src/Containers.Windows.Silos2025/Containers.Windows.Silos2025.csproj" />
+    <Compile Include="../Containers.Windows.Silos.Tests/NativeContractTests.cs" Link="Shared/NativeContractTests.cs" />
+    <Compile Include="../Containers.Windows.Silos.Tests/SiloLifecycleTests.cs" Link="Shared/SiloLifecycleTests.cs" />
+    <Compile Include="../Containers.Windows.Silos.Tests/HostFileFixupTests.cs" Link="Shared/HostFileFixupTests.cs" />
+    <Compile Include="../Containers.Windows.Silos.Tests/PlatformProviderTests.cs" Link="Shared/PlatformProviderTests.cs" />
+    <Compile Include="../Containers.Windows.Silos.Tests/ServerImageMetadataTests.cs" Link="Shared/ServerImageMetadataTests.cs" />
+    <Compile Include="../Containers.Windows.Silos.Tests/SiloDescriptionXmlTests.cs" Link="Shared/SiloDescriptionXmlTests.cs" />
+    <Compile Include="../Containers.Windows.Silos.Tests/SiloQueryLifecycleTests.cs" Link="Shared/SiloQueryLifecycleTests.cs" />
+    <Compile Include="../Containers.Windows.Silos.Tests/TerminationNotificationTests.cs" Link="Shared/TerminationNotificationTests.cs" />
+    <Compile Include="../Containers.Windows.Silos.Tests/WindowsViewTests.cs" Link="Shared/WindowsViewTests.cs" />
+    <Compile Include="../Containers.Windows.Silos.Tests/WindowsXmlOracleTests.cs" Link="Shared/WindowsXmlOracleTests.cs" />
+  </ItemGroup>
+</Project>

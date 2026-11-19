@@ -1,0 +1,51 @@
+# .NET build and test outputs
+**/[Bb]in/
+**/[Oo]bj/
+/artifacts/
+**/TestResults/
+*.trx
+*.coverage
+*.coveragexml
+coverage.cobertura.xml
+coverage.opencover.xml
+
+# IDE and per-user state
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.rsuser
+*.DotSettings.user
+
+# Local upstream checkouts and package caches; lock manifests stay tracked
+/.upstream/
+/.packages/
+/.tools/
+/.dotnet/
+packages/
+!**/packages/build/
+
+# Local runtime state, certificates, and credentials
+/.state/
+/.secrets/
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.publishsettings
+*.pubxml.user
+
+# Local OS/editor temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*~
+*.swp
+*.swo
+
+# Python reference-tool bytecode caches
+__pycache__/
+*.py[cod]

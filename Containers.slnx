@@ -1,0 +1,20 @@
+<Solution>
+  <Folder Name="/docs/">
+    <File Path=".gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="docs\windows-silo-description.md" />
+    <File Path="docs\windows-silo-filesystem.md" />
+    <File Path="docs\windows-silo-object-manager.md" />
+    <File Path="docs\windows-silo-registry-device.md" />
+    <File Path="docs\windows-silos.md" />
+    <File Path="README.md" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Containers.Windows.Silos/Containers.Windows.Silos.csproj" />
+    <Project Path="src/Containers.Windows.Silos2025/Containers.Windows.Silos2025.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Containers.Windows.Silos.Tests/Containers.Windows.Silos.Tests.csproj" />
+    <Project Path="tests/Containers.Windows.Silos2025.Tests/Containers.Windows.Silos2025.Tests.csproj" />
+  </Folder>
+</Solution>
