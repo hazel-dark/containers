@@ -126,18 +126,20 @@ internal sealed unsafe partial class NativeApi
 
     private static string ReadRegistryString(nint key, string subkey, string value, RegistryRead read)
     {
-        var size = 128U;
+        Span<byte> initial = stackalloc byte[128];
+        var size = (uint)initial.Length;
         while (true)
         {
-            var data = new byte[size];
-            fixed (byte* p = data)
+            using var data = new NativeScratchBuffer<byte>(initial, checked((int)size));
+            data.Span.Clear();
+            fixed (byte* p = data.Span)
             {
                 var status = read(key, subkey, value, (uint)REG_ROUTINE_FLAGS.RRF_RT_REG_SZ, p, &size);
                 if (status == (int)WIN32_ERROR.ERROR_MORE_DATA)
                     continue;
 
                 SiloException.CheckWin32(status, "Read image " + value);
-                return new string((char*)p, 0, checked((int)size) / 2).TrimEnd('\0');
+                return MemoryMarshal.Cast<byte, char>(data.Span[..checked((int)size)]).TrimEnd('\0').ToString();
             }
         }
     }

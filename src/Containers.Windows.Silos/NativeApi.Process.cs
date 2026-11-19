@@ -9,7 +9,6 @@ internal sealed unsafe partial class NativeApi
 {
     public nint Launch(nint job, string command, uint flags)
     {
-        var commandLine = (command + '\0').ToCharArray();
         nuint length = NativeJobConstants.SingleProcThreadAttributeListSize;
         var attributes = stackalloc byte[NativeJobConstants.SingleProcThreadAttributeListSize];
         var list = new LPPROC_THREAD_ATTRIBUTE_LIST(attributes);
@@ -23,7 +22,8 @@ internal sealed unsafe partial class NativeApi
 
             if (IsServer(job))
             {
-                var data = new byte[NativeJobConstants.ServerSiloUserSharedDataSize];
+                Span<byte> data = stackalloc byte[NativeJobConstants.ServerSiloUserSharedDataSize];
+                data.Clear();
                 SiloException.CheckNt(QueryJob(job, NativeJobConstants.JobObjectServerSiloUserSharedData, data), "QueryServerSiloUserSharedData");
 
                 var session = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(data);
@@ -48,7 +48,10 @@ internal sealed unsafe partial class NativeApi
 
             var startup = new StartupInfoEx { Attributes = list };
             startup.Startup.cb = NativeJobConstants.StartupInfoExSize;
-            fixed (char* line = commandLine)
+            using var commandLine = new NativeScratchBuffer<char>(stackalloc char[256], checked(command.Length + 1));
+            command.AsSpan().CopyTo(commandLine.Span);
+            commandLine.Span[^1] = '\0';
+            fixed (char* line = commandLine.Span)
             {
                 PROCESS_INFORMATION process;
                 CheckBool(PInvoke.CreateProcessAsUser(token, null, line, null, null, true, (PROCESS_CREATION_FLAGS)flags, null, null, &startup.Startup, &process).Value, "CreateProcessAsUserW");

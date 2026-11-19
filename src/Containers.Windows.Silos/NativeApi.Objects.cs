@@ -205,11 +205,13 @@ internal sealed unsafe partial class NativeApi
             try
             {
                 SiloException.CheckNt(openStatus, "NtOpenSymbolicLinkObject");
+                Span<char> initial = stackalloc char[(int)InitialObjectLinkTargetBytes / sizeof(char)];
                 var size = InitialObjectLinkTargetBytes;
                 while (true)
                 {
-                    var buffer = new char[size / 2];
-                    fixed (char* b = buffer)
+                    using var buffer = new NativeScratchBuffer<char>(initial, (int)size / sizeof(char));
+                    buffer.Span.Clear();
+                    fixed (char* b = buffer.Span)
                     {
                         var target = new UnicodeString { Buffer = b, MaximumLength = (ushort)size };
                         var required = size;

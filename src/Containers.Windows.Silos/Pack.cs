@@ -13,18 +13,17 @@ internal static class Pack
         return checked(value.Length * 2);
     }
 
-    internal static byte[] Strings(int header, params string[] strings)
+    internal static byte[] Strings<T>(in T header, params ReadOnlySpan<string> strings) where T : unmanaged
     {
-        var b = new byte[checked(header + strings.Sum(x => x.Length) * 2)];
+        var size = Unsafe.SizeOf<T>();
         foreach (var value in strings)
-            header += WriteString(b, header, value);
-        return b;
-    }
+            size = checked(size + value.Length * sizeof(char));
 
-    internal static byte[] Strings<T>(in T header, params string[] strings) where T : unmanaged
-    {
-        var data = Strings(Unsafe.SizeOf<T>(), strings);
+        var data = new byte[size];
         MemoryMarshal.Write(data, in header);
+        var offset = Unsafe.SizeOf<T>();
+        foreach (var value in strings)
+            offset += WriteString(data, offset, value);
         return data;
     }
 

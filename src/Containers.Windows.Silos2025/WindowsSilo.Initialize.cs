@@ -16,7 +16,8 @@ public partial class WindowsSilo
     /// <summary>Returns the server silo's service session identifier, including its unassigned value.</summary>
     public uint ServiceSessionId => Use(handle =>
     {
-        var data = new byte[NativeJobConstants.ServerSiloUserSharedDataSize];
+        Span<byte> data = stackalloc byte[NativeJobConstants.ServerSiloUserSharedDataSize];
+        data.Clear();
         SiloException.CheckNt(_api.QueryJob(handle, NativeJobConstants.JobObjectServerSiloUserSharedData, data), "Query server service session");
         return BinaryPrimitives.ReadUInt32LittleEndian(data);
     });

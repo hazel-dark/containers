@@ -21,7 +21,7 @@ internal sealed unsafe partial class NativeApi
         using var driver = _platform.OpenRegistryDriver();
         var stacks = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        Ioctl(driver, WcVRegRegisterJob, new HANDLE(job));
+        Ioctl(driver, WcVRegRegisterJob, job.AsBytes());
         try
         {
             foreach (var stack in configuration.HiveStacks)
@@ -123,7 +123,7 @@ internal sealed unsafe partial class NativeApi
         try
         {
             using var driver = _platform.OpenRegistryDriver();
-            Ioctl(driver, WcVRegDetachJob, new HANDLE(job));
+            Ioctl(driver, WcVRegDetachJob, job.AsBytes());
         }
         catch (Exception error)
         {
@@ -141,8 +141,9 @@ internal sealed unsafe partial class NativeApi
     private nint GetRegistryHandle(SafeFileHandle driver, nint job, uint type)
     {
         var request = new VrGetVirtualRoot { Job = new HANDLE(job), Index = type };
-        var output = Ioctl(driver, WcVRegGetRegistryHandle, request.AsBytes(), sizeof(VrGetVirtualRootResult));
-        return MemoryMarshal.Read<VrGetVirtualRootResult>(output).Key;
+        VrGetVirtualRootResult output = default;
+        Ioctl(driver, WcVRegGetRegistryHandle, request.AsBytes(), output.AsBytes());
+        return output.Key;
     }
 
     public void ModifyRegistryFlags(nint job, uint add, uint remove)
@@ -278,7 +279,7 @@ internal sealed unsafe partial class NativeApi
 
                     if (disposition == (uint)REG_CREATE_KEY_DISPOSITION.REG_CREATED_NEW_KEY)
                     {
-                        SetRegistryValue(key, "SymbolicLinkValue", (uint)REG_VALUE_TYPE.REG_LINK, Pack.Strings(0, link.Target));
+                        SetRegistryValue(key, "SymbolicLinkValue", (uint)REG_VALUE_TYPE.REG_LINK, MemoryMarshal.AsBytes(link.Target.AsSpan()));
                         return;
                     }
 

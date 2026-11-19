@@ -56,27 +56,11 @@ internal sealed unsafe partial class NativeApi : ISiloApi
     public void AssignProcess(nint job, nint process) => SiloException.CheckNt(NativeMethods.NtAssignProcessToJobObject(job, process), "NtAssignProcessToJobObject");
     public void Terminate(nint job, int status) => SiloException.CheckNt(NativeMethods.NtTerminateJobObject(job, status), "NtTerminateJobObject");
 
-    
-    private byte[] Ioctl(SafeFileHandle handle, uint code, HANDLE input, int outputSize = 0, int acceptedError = 0)
+    private void Ioctl(SafeFileHandle handle, uint code, ReadOnlySpan<byte> input, Span<byte> output = default, int acceptedError = 0)
     {
-        var output = new byte[outputSize];
-        
-        var inputBytes = MemoryMarshal.AsBytes(new ReadOnlySpan<nint>(&input, 1));
-        var error = _platform.DeviceControl(handle, code, inputBytes, output);
-        if (error != 0 && error != acceptedError)
-            SiloException.CheckWin32(error, $"DeviceIoControl(0x{code:x})");
-
-        return output;
-    }
-
-    private byte[] Ioctl(SafeFileHandle handle, uint code, ReadOnlySpan<byte> input, int outputSize = 0, int acceptedError = 0)
-    {
-        var output = new byte[outputSize];
         var error = _platform.DeviceControl(handle, code, input, output);
         if (error != 0 && error != acceptedError)
             SiloException.CheckWin32(error, $"DeviceIoControl(0x{code:x})");
-
-        return output;
     }
 
     public void RegisterServer(nint job)
@@ -120,17 +104,19 @@ internal sealed unsafe partial class NativeApi : ISiloApi
 
     public string GetObjectRoot(nint job)
     {
-        var size = NativeJobConstants.SiloObjectRootInitialBufferSize;
+        Span<byte> initial = stackalloc byte[NativeJobConstants.SiloObjectRootInitialBufferSize];
+        var size = initial.Length;
         while (true)
         {
-            var data = new byte[size];
-            fixed (byte* p = data)
+            using var data = new NativeScratchBuffer<byte>(initial, size);
+            data.Span.Clear();
+            fixed (byte* p = data.Span)
             {
                 uint returned;
                 var status = _platform.QueryJob(job, NativeJobConstants.JobObjectSiloRootDirectory, p, (uint)size, &returned);
                 if (status == NTSTATUS.STATUS_BUFFER_TOO_SMALL)
                 {
-                    size = size == NativeJobConstants.SiloObjectRootInitialBufferSize
+                    size = size == initial.Length
                         ? NativeJobConstants.SiloObjectRootRetryBufferSize
                         : checked(size * 2);
                     continue;
@@ -145,9 +131,10 @@ internal sealed unsafe partial class NativeApi : ISiloApi
 
     public Guid GetId(nint job)
     {
-        var data = new byte[NativeJobConstants.ContainerIdInformationSize];
+        Span<byte> data = stackalloc byte[NativeJobConstants.ContainerIdInformationSize];
+        data.Clear();
         SiloException.CheckNt(QueryJob(job, NativeJobConstants.JobObjectContainerId, data), "QueryContainerId");
-        return new Guid(data.AsSpan(0, sizeof(Guid)));
+        return new Guid(data[..sizeof(Guid)]);
     }
 
     public string GetRegistryRoot(nint job) => FormatRegistryRoot(GetId(job), "");

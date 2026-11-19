@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.InteropServices;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.JobObjects;
@@ -8,6 +9,27 @@ internal static class NativeBuffer
 {
     internal static Span<byte> AsBytes<T>(this ref T value) where T : unmanaged =>
         MemoryMarshal.AsBytes(new Span<T>(ref value));
+}
+
+internal readonly ref struct NativeScratchBuffer<T> where T : unmanaged
+{
+    private readonly T[]? _rented;
+    internal Span<T> Span { get; }
+
+    internal NativeScratchBuffer(Span<T> stackBuffer, int length)
+    {
+        _rented = length > stackBuffer.Length ? ArrayPool<T>.Shared.Rent(length) : null;
+        Span = _rented is null ? stackBuffer[..length] : _rented.AsSpan(0, length);
+    }
+
+    public void Dispose()
+    {
+        if (_rented is not null)
+        {
+            Span.Clear();
+            ArrayPool<T>.Shared.Return(_rented);
+        }
+    }
 }
 
 // phnt ntpsapi.h, JOBOBJECT_EXTENDED_LIMIT_INFORMATION_V2. The x64 Wc call
