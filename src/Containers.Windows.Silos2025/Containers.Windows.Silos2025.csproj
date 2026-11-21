@@ -3,7 +3,7 @@
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <PlatformTarget>x64</PlatformTarget>
         <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
-        <!--    <CsWin32RunAsBuildTask>true</CsWin32RunAsBuildTask>-->
+        <CsWin32RunAsBuildTask>true</CsWin32RunAsBuildTask>
         <RootNamespace>Containers.Windows.Silos</RootNamespace>
         <DefineConstants>$(DefineConstants);WINDOWS_2025</DefineConstants>
     </PropertyGroup>
@@ -17,6 +17,7 @@
         <Compile Include="../Containers.Windows.Silos/I*.cs" Link="Shared/%(Filename)%(Extension)" />
         <Compile Include="../Containers.Windows.Silos/NativeApi.*.cs" Link="Shared/%(Filename)%(Extension)" />
         <Compile Include="../Containers.Windows.Silos/NativeApi.cs" Link="Shared/NativeApi.cs" />
+        <Compile Include="../Containers.Windows.Silos/JobSafeHandle.cs" Link="Shared/JobSafeHandle.cs" />
         <Compile Include="../Containers.Windows.Silos/NativeJobConstants.cs" Link="Shared/NativeJobConstants.cs" />
         <Compile Include="../Containers.Windows.Silos/NativeMethods.cs" Link="Shared/NativeMethods.cs" />
         <Compile Include="../Containers.Windows.Silos/NativeProviderConstants.cs" Link="Shared/NativeProviderConstants.cs" />

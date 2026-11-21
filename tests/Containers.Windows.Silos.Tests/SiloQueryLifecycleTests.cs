@@ -1,3 +1,4 @@
+using Windows.Win32.Foundation;
 using System.Buffers.Binary;
 using Containers.Windows.Silos.DescriptionModel;
 using Microsoft.Win32.SafeHandles;
@@ -17,7 +18,7 @@ public sealed class SiloQueryLifecycleTests
     public void IdentityAndObjectRootUseNativeQueryBufferAndErrorContracts()
     {
         var calls = new RecordingCalls();
-        using var job = new SafeFileHandle(Job, ownsHandle: false);
+        using var job = new JobSafeHandle(Job, ownsHandle: false);
         using var silo = WindowsSilo.ConfigureJob(job, new SiloDescription(), false, new NativeApi(calls));
 
         calls.Trace.Clear();
@@ -38,7 +39,7 @@ public sealed class SiloQueryLifecycleTests
     public void QuiescenceReadsAssignedCountAndPassesNullReturnLength()
     {
         var calls = new RecordingCalls();
-        using var job = new SafeFileHandle(Job, ownsHandle: false);
+        using var job = new JobSafeHandle(Job, ownsHandle: false);
         using var silo = WindowsSilo.ConfigureJob(job, new SiloDescription(), false, new NativeApi(calls));
 
         calls.Trace.Clear();
@@ -54,14 +55,14 @@ public sealed class SiloQueryLifecycleTests
     {
         var calls = new RecordingCalls();
         var api = new NativeApi(calls);
-        using var job = new SafeFileHandle(Job, ownsHandle: false);
+        using var job = new JobSafeHandle(Job, ownsHandle: false);
         using var silo = WindowsSilo.ConfigureJob(job, new SiloDescription(), false, api);
 
         calls.Trace.Clear();
         silo.SetRegistryFlushEnabled(true);
         silo.SetRegistryFlushEnabled(false);
         silo.AddRuntimeVirtualKeys([]);
-        Assert.Equal((nint)Key, api.GetRegistryHandle(Job, 0));
+        Assert.Equal((nint)Key, api.GetRegistryHandle(job, 0));
         Assert.Equal([
             "query:30:36", "registry-open", "io:220010:34120000000000000000000001000000",
             "query:30:36", "registry-open", "io:220010:34120000000000000100000000000000",
@@ -75,7 +76,7 @@ public sealed class SiloQueryLifecycleTests
     public void ComKeySafeHandleTransfersToCaller()
     {
         var calls = new RecordingCalls();
-        using var job = new SafeFileHandle(Job, ownsHandle: false);
+        using var job = new JobSafeHandle(Job, ownsHandle: false);
         using var silo = WindowsSilo.ConfigureJob(job, new SiloDescription(), false, new NativeApi(calls));
 
         using var key = silo.OpenComRegistryRoot();
@@ -97,7 +98,7 @@ public sealed class SiloQueryLifecycleTests
     public void NulTerminatedEmptyVolumeSkipsTheSiloTypeQuery()
     {
         var calls = new RecordingCalls();
-        using var job = new SafeFileHandle(Job, ownsHandle: false);
+        using var job = new JobSafeHandle(Job, ownsHandle: false);
         using var silo = WindowsSilo.ConfigureJob(job, new SiloDescription(), false, new NativeApi(calls));
 
         calls.Trace.Clear();
@@ -109,7 +110,7 @@ public sealed class SiloQueryLifecycleTests
     public void RegistryIoFailureDoesNotPreventFilesystemCleanup()
     {
         var calls = new RecordingCalls { RegistryCleanupError = 5 };
-        using var job = new SafeFileHandle(Job, ownsHandle: false);
+        using var job = new JobSafeHandle(Job, ownsHandle: false);
         using var silo = WindowsSilo.ConfigureJob(job, new SiloDescription(), false, new NativeApi(calls));
 
         calls.Trace.Clear();
@@ -136,15 +137,15 @@ public sealed class SiloQueryLifecycleTests
         internal uint AssignedProcesses { get; set; }
         internal int RegistryCleanupError { get; init; }
 
-        internal override int SetJob(nint job, int informationClass, void* data, uint length)
+        internal override int SetJob(JobSafeHandle job, int informationClass, void* data, uint length)
         {
-            Assert.Equal(Job, job);
+            Assert.Equal(Job, job.DangerousGetHandle());
             return 0;
         }
 
-        internal override int QueryJob(nint job, int informationClass, void* data, uint length, uint* returned)
+        internal override int QueryJob(JobSafeHandle job, int informationClass, void* data, uint length, uint* returned)
         {
-            Assert.Equal(Job, job);
+            Assert.Equal(Job, job.DangerousGetHandle());
             Trace.Add($"query:{informationClass}:{length}");
             if (informationClass == 0x1e)
             {
@@ -182,11 +183,11 @@ public sealed class SiloQueryLifecycleTests
             const string root = @"\Silos\7";
             var buffer = (char*)((byte*)data + 0x10);
             root.AsSpan().CopyTo(new Span<char>(buffer, root.Length));
-            *(UnicodeString*)data = new UnicodeString(buffer, root.Length);
+            *(UNICODE_STRING*)data = NativeBuffer.UnicodeString(buffer, root.Length);
             return ObjectRootStatus;
         }
 
-        internal override uint GetCompartment(nint job) => 1;
+        internal override uint GetCompartment(JobSafeHandle job) => 1;
 
         internal override SafeFileHandle OpenRegistryDriver()
         {

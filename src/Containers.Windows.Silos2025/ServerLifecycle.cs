@@ -1,7 +1,4 @@
-using System.Buffers.Binary;
-using System.Runtime.InteropServices;
 using Windows.Win32.Foundation;
-using Windows.Win32.System.JobObjects;
 using Containers.Windows.Silos.DescriptionModel;
 using Wdk = Windows.Wdk.PInvoke;
 
@@ -9,7 +6,7 @@ namespace Containers.Windows.Silos;
 
 internal partial interface ISiloApi
 {
-    uint ValidateBootImage(nint job);
+    uint ValidateBootImage(JobSafeHandle job);
 }
 
 internal sealed unsafe partial class NativeApi
@@ -19,13 +16,13 @@ internal sealed unsafe partial class NativeApi
     private bool HostFileMappingExists(string destination, string source)
         => _platform.FindFixupFile(destination, 0) && _platform.FindFixupFile(source, 0);
 
-    public void ConfigureServerImage(nint job, DownlevelConfiguration? configuration)
+    public void ConfigureServerImage(JobSafeHandle job, DownlevelConfiguration? configuration)
     {
         if (configuration is not null)
             InjectHostFiles(job, configuration);
     }
 
-    public uint ValidateBootImage(nint job)
+    public uint ValidateBootImage(JobSafeHandle job)
     {
         uint containerMinimum = 0, hostMinimum = 0, skipCheck = 0;
         var table = stackalloc RegistryQueryEntry[4];

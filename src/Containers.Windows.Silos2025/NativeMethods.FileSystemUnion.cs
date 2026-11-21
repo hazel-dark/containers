@@ -10,11 +10,11 @@ internal static unsafe partial class NativeMethods
 
     [LibraryImport("unionfsapi.dll")]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-    internal static partial int CreateFileSystemUnion(Guid* id, nint* paths, uint count, uint options, nint job, nint reserved);
+    internal static partial int CreateFileSystemUnion(Guid* id, nint* paths, uint count, uint options, JobSafeHandle job, nint reserved);
 
     [LibraryImport("unionfsapi.dll", StringMarshalling = StringMarshalling.Utf16)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-    internal static partial int MigrateFileSystemUnion(nint* paths, uint count, string configPath, Guid* id, nint job, nint reserved);
+    internal static partial int MigrateFileSystemUnion(nint* paths, uint count, string configPath, Guid* id, JobSafeHandle job, nint reserved);
 
     [LibraryImport("unionfsapi.dll", StringMarshalling = StringMarshalling.Utf16)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]

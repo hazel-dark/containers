@@ -68,7 +68,7 @@ public sealed class ServerLifecycle2025Tests
         internal bool FailValidation;
         internal uint TotalProcesses;
 
-        public override uint ValidateBootImage(nint job)
+        public override uint ValidateBootImage(JobSafeHandle job)
         {
             Calls.Add("validate-boot-image");
             if (FailValidation)
@@ -76,9 +76,9 @@ public sealed class ServerLifecycle2025Tests
             return 20348;
         }
 
-        public override int QueryJob(nint job, int informationClass, Span<byte> data)
+        public override int QueryJob(JobSafeHandle job, int informationClass, Span<byte> data)
         {
-            Assert.Equal(CreatedJob, job);
+            Assert.Equal(CreatedJob, job.DangerousGetHandle());
             switch (informationClass)
             {
                 case 1:

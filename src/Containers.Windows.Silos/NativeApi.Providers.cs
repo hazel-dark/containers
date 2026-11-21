@@ -1,7 +1,9 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Win32.SafeHandles;
 using Windows.Wdk.Storage.FileSystem;
+using Windows.Win32;
 using Windows.Win32.Foundation;
+using Windows.Win32.NetworkManagement.Ndis;
 using Windows.Win32.System.Kernel;
 using Containers.Windows.Silos.DescriptionModel;
 using static Containers.Windows.Silos.NativeProviderConstants;
@@ -11,7 +13,7 @@ namespace Containers.Windows.Silos;
 
 internal sealed unsafe partial class NativeApi
 {
-    public void SetupNetwork(nint job, string name)
+    public void SetupNetwork(JobSafeHandle job, string name)
     {
         if (name.Length >= CompartmentDescriptionCapacity || name.Contains('\0'))
             throw new ArgumentException("A compartment name must fit the native 257-character buffer.", nameof(name));
@@ -42,7 +44,7 @@ internal sealed unsafe partial class NativeApi
         }
     }
 
-    public void CleanupNetwork(nint job)
+    public void CleanupNetwork(JobSafeHandle job)
     {
         var id = _platform.GetCompartment(job);
         if (id == (uint)COMPARTMENT_ID.DEFAULT_COMPARTMENT_ID)
@@ -57,10 +59,10 @@ internal sealed unsafe partial class NativeApi
             SiloEventSource.Log.NetworkCleanupFailed(id, "DeleteCompartment", delete);
     }
 
-    public void SetupMounts(nint job, IReadOnlyList<DriveMapping> mounts)
+    public void SetupMounts(JobSafeHandle job, IReadOnlyList<DriveMapping> mounts)
     {
         const uint mountAccess = (uint)(GENERIC_ACCESS_RIGHTS.GENERIC_READ | GENERIC_ACCESS_RIGHTS.GENERIC_WRITE);
-        var jobHandle = new HANDLE(job);
+        var jobHandle = new HANDLE(job.DangerousGetHandle());
         using (var host = _platform.OpenDevice(@"\\.\MountPointManager", mountAccess, WcMountManagerTemplateHandle))
             Ioctl(host, IoctlMountMgrSiloArrival, jobHandle.AsBytes());
 
@@ -91,20 +93,19 @@ internal sealed unsafe partial class NativeApi
 
         static NativeScratchBuffer<byte> MountPoint(Span<byte> stackBuffer, string linkName, string deviceName)
         {
-            var header = new MountMgrCreatePointInput
-            {
-                SymbolicLinkNameOffset = checked((ushort)Unsafe.SizeOf<MountMgrCreatePointInput>()),
-                SymbolicLinkNameLength = checked((ushort)(linkName.Length * sizeof(char))),
-                DeviceNameLength = checked((ushort)(deviceName.Length * sizeof(char))),
-            };
+            var header = new MountMgrCreatePointInput();
+            header.SymbolicLinkNameOffset = checked((ushort)Unsafe.SizeOf<MountMgrCreatePointInput>());
+            header.SymbolicLinkNameLength = checked((ushort)(linkName.Length * sizeof(char)));
+            header.DeviceNameLength = checked((ushort)(deviceName.Length * sizeof(char)));
             header.DeviceNameOffset = checked((ushort)(header.SymbolicLinkNameOffset + header.SymbolicLinkNameLength));
             return NativeBuffer.Strings(stackBuffer, in header, linkName, deviceName);
         }
     }
 
-    public void SetupPipes(nint job, IReadOnlyList<PipeMapping> pipes)
+    public void SetupPipes(JobSafeHandle job, IReadOnlyList<PipeMapping> pipes)
     {
-        var arrival = new FILE_PIPE_SILO_ARRIVAL_INPUT { JobHandle = new HANDLE(job) };
+        var arrival = new FILE_PIPE_SILO_ARRIVAL_INPUT();
+        arrival.JobHandle = new HANDLE(job.DangerousGetHandle());
         using (var host = _platform.OpenDevice(@"\\.\pipe", (uint)GENERIC_ACCESS_RIGHTS.GENERIC_WRITE, 0))
             SiloException.CheckNt(_platform.FsControl(host, Wdk.FSCTL_PIPE_SILO_ARRIVAL, arrival.AsBytes()), "NtFsControlFile(0x118048)");
 
@@ -128,14 +129,12 @@ internal sealed unsafe partial class NativeApi
     internal static NativeScratchBuffer<byte> PipeSymlink(Span<byte> stackBuffer, string name, string target)
     {
         var nameOffset = Unsafe.SizeOf<FILE_PIPE_CREATE_SYMLINK_INPUT>();
-        var header = new FILE_PIPE_CREATE_SYMLINK_INPUT
-        {
-            NameOffset = checked((ushort)nameOffset),
-            NameLength = checked((ushort)(name.Length * sizeof(char))),
-            SubstituteNameOffset = checked((ushort)(nameOffset + name.Length * sizeof(char))),
-            SubstituteNameLength = checked((ushort)(target.Length * sizeof(char))),
-            Flags = Wdk.FILE_PIPE_SYMLINK_FLAG_GLOBAL,
-        };
+        var header = new FILE_PIPE_CREATE_SYMLINK_INPUT();
+        header.NameOffset = checked((ushort)nameOffset);
+        header.NameLength = checked((ushort)(name.Length * sizeof(char)));
+        header.SubstituteNameOffset = checked((ushort)(nameOffset + name.Length * sizeof(char)));
+        header.SubstituteNameLength = checked((ushort)(target.Length * sizeof(char)));
+        header.Flags = Wdk.FILE_PIPE_SYMLINK_FLAG_GLOBAL;
         return NativeBuffer.Strings(stackBuffer, in header, name, target);
     }
 
@@ -143,8 +142,8 @@ internal sealed unsafe partial class NativeApi
     {
         internal virtual char UpperCharacter(char value) => char.ToUpperInvariant(value);
         internal virtual uint CreateCompartment(CompartmentEntry* entry) => NativeMethods.CreateCompartment(entry);
-        internal virtual uint GetCompartment(nint job) => NativeMethods.GetJobCompartmentId(job);
-        internal virtual uint SetCompartment(nint job, uint id) => NativeMethods.SetJobCompartmentId(job, id);
+        internal virtual uint GetCompartment(JobSafeHandle job) => PInvoke.GetJobCompartmentId(job).Value;
+        internal virtual uint SetCompartment(JobSafeHandle job, uint id) => (uint)PInvoke.SetJobCompartmentId(job, new NET_IF_COMPARTMENT_ID(id));
         internal virtual uint DeleteCompartment(uint id) => NativeMethods.DeleteCompartment(id);
 
         internal virtual void InitializeCompartment(out CompartmentEntry entry)
@@ -154,19 +153,6 @@ internal sealed unsafe partial class NativeApi
         }
 
         internal virtual int FsControl(SafeFileHandle handle, uint code, Span<byte> input)
-        {
-            var borrowed = false;
-            try
-            {
-                handle.DangerousAddRef(ref borrowed);
-                fixed (byte* p = input)
-                    return NativeMethods.NtFsControlFile(handle.DangerousGetHandle(), 0, 0, 0, out _, code, p, (uint)input.Length, null, 0);
-            }
-            finally
-            {
-                if (borrowed)
-                    handle.DangerousRelease();
-            }
-        }
+            => Wdk.NtFsControlFile(handle, null, null, null, out _, code, input);
     }
 }

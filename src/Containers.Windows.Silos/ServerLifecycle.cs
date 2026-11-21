@@ -24,7 +24,6 @@ internal sealed unsafe partial class NativeApi
         }
     }
 
-
     private const uint Server2019Build = 17763;
 
     private static readonly Lazy<bool> UtilityVm = new Lazy<bool>(ReadIsUtilityVm);
@@ -53,7 +52,7 @@ internal sealed unsafe partial class NativeApi
         return terminator >= 0 && text[..terminator] is "UtilityVM";
     }
 
-    public void ConfigureServerImage(nint job, DownlevelConfiguration? configuration)
+    public void ConfigureServerImage(JobSafeHandle job, DownlevelConfiguration? configuration)
     {
         var policy = ReadImagePolicy();
         var host = ReadHostVersion();
@@ -84,6 +83,7 @@ internal sealed unsafe partial class NativeApi
             table[2] = QueryDword(s, &skipCheck);
             table[3] = QueryDword(d, &downlevel);
             table[4] = default;
+
             var status = NativeMethods.RtlQueryRegistryValuesEx(Wdk.RTL_REGISTRY_CONTROL, "Windows Containers", table, 0, 0);
             if (status != NTSTATUS.STATUS_OBJECT_NAME_NOT_FOUND.Value)
                 SiloException.CheckNt(status, "Read Windows Containers registry policy");

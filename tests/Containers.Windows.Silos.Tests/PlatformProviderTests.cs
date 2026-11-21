@@ -1,3 +1,5 @@
+using Windows.Win32.Foundation;
+using Windows.Wdk.Foundation;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics.Tracing;
@@ -21,7 +23,8 @@ public sealed unsafe class PlatformProviderTests
     private const int TooSmall = unchecked((int)0xc0000023);
     private const int Overflow = unchecked((int)0xc0000095);
     private const int CannotDelete = unchecked((int)0xc0000121);
-    private const nint Job = 0x1234;
+    private const nint JobValue = 0x1234;
+    private static readonly JobSafeHandle Job = new JobSafeHandle(JobValue, ownsHandle: false);
     private static readonly Guid Id = new Guid("1234abcd-789a-bcde-f123-abcdef102abc");
 
     [Theory]
@@ -73,7 +76,8 @@ public sealed unsafe class PlatformProviderTests
     public void ObjectLinkRejectsImpossibleRetrySizesAndReleasesItsSource(uint required)
     {
         using var log = new ProviderLog();
-        var calls = new Object { SourceRequired = required };
+        var calls = new Object();
+        calls.SourceRequired = required;
         new NativeApi(calls).SetupObjects(Job, new ObjectNamespaceConfiguration
         {
             Symlinks = [new ObjectSymlink("copy") { TargetSource = @"\source" }, new ObjectSymlink("after") { Target = "direct" }]
@@ -90,7 +94,8 @@ public sealed unsafe class PlatformProviderTests
     [InlineData(true, true)]
     public void PipeControlsHaveNullTemplatesAndPreserveFailureStatus(bool map, bool fail)
     {
-        var calls = new Provider { PipeStatus = fail ? Denied : 0 };
+        var calls = new Provider();
+        calls.PipeStatus = fail ? Denied : 0;
         var api = new NativeApi(calls);
         void Setup() => api.SetupPipes(Job, map ? [new PipeMapping("A🙂", "B")] : []);
         if (fail)
@@ -129,7 +134,8 @@ public sealed unsafe class PlatformProviderTests
     public void RegistryDetachFailureIsDiagnosticAndReleasesOnlyItsDevice(bool openFails)
     {
         using var log = new ProviderLog();
-        var calls = new Registry { OpenStatus = openFails ? Denied : 0 };
+        var calls = new Registry();
+        calls.OpenStatus = openFails ? Denied : 0;
         calls.DeviceErrors[0x220018] = 5;
         var api = new NativeApi(calls);
 
@@ -165,7 +171,7 @@ public sealed unsafe class PlatformProviderTests
         Assert.Equal(registered ? new uint[] { 0x220004, 0x22000c, 0x220018 } : [0x220004],
             calls.Controls.Select(c => c.Code));
         Assert.Equal(registered ? 1 : 0, log.Events.Count(e => e.EventName == "RegistryCleanupFailed"));
-        Assert.All(calls.Controls, call => Assert.Equal((long)Job, BinaryPrimitives.ReadInt64LittleEndian(call.Input)));
+        Assert.All(calls.Controls, call => Assert.Equal((long)JobValue, BinaryPrimitives.ReadInt64LittleEndian(call.Input)));
         Assert.All(calls.Devices, handle => Assert.True(handle.IsClosed));
         Assert.Empty(calls.Closed);
     }
@@ -176,7 +182,7 @@ public sealed unsafe class PlatformProviderTests
         const string expected = @"\Registry\WC\Silo1234abcd-789a-bcde-f123-abcdef102abc";
         var calls = new Registry();
         var api = new NativeApi(calls);
-        using var job = new SafeFileHandle(Job, ownsHandle: false);
+        using var job = new JobSafeHandle(JobValue, ownsHandle: false);
         using var silo = WindowsSilo.ConfigureJob(job, new SiloDescription(), server: false, api);
         Assert.Equal(expected + @"\Suffix", silo.GetRegistryRootPath(@"\Suffix"));
 
@@ -227,7 +233,9 @@ public sealed unsafe class PlatformProviderTests
     [InlineData(TooSmall)]
     public void RegistryEnumerationUsesCapturedCountAndIncreasingIndices(int status)
     {
-        var calls = new Registry { TreeOpenStatus = status == Missing ? status : 0, EnumerationStatus = status == TooSmall ? status : 0 };
+        var calls = new Registry();
+        calls.TreeOpenStatus = status == Missing ? status : 0;
+        calls.EnumerationStatus = status == TooSmall ? status : 0;
         var api = new NativeApi(calls);
         var config = new RegistryConfiguration
         {
@@ -270,7 +278,8 @@ public sealed unsafe class PlatformProviderTests
     public void ObjectLinkSourceFailuresSkipOnlyTheCurrentLink(int status)
     {
         using var log = new ProviderLog();
-        var calls = new Object { SourceStatus = status };
+        var calls = new Object();
+        calls.SourceStatus = status;
         var config = new ObjectNamespaceConfiguration
         {
             Symlinks = [new ObjectSymlink("copy") { TargetSource = @"\source" }, new ObjectSymlink("after") { Target = @"\direct" }]
@@ -300,7 +309,9 @@ public sealed unsafe class PlatformProviderTests
     [InlineData(true)]
     public void ObjectLinkGuardsItsOutputAndPropagatesScopeFailure(bool collision)
     {
-        var calls = new Object { LinkStatus = collision ? Collision : 0, ScopeStatus = Denied };
+        var calls = new Object();
+        calls.LinkStatus = collision ? Collision : 0;
+        calls.ScopeStatus = Denied;
         var config = new ObjectNamespaceConfiguration
         {
             Symlinks = [new ObjectSymlink("scoped") { TargetSource = @"\source", Scope = SymlinkScope.GlobalDropSilo }]
@@ -377,7 +388,10 @@ public sealed unsafe class PlatformProviderTests
     [Fact]
     public void NetworkRollbackAndCleanupLogInNativeOrder()
     {
-        var calls = new Provider { BindError = 5, DeleteError = 32, Compartment = 37 };
+        var calls = new Provider();
+        calls.BindError = 5;
+        calls.DeleteError = 32;
+        calls.Compartment = 37;
         using var log = new ProviderLog(entry =>
         {
             if (entry.EventName == "NetworkCleanupFailed")
@@ -441,15 +455,15 @@ public sealed unsafe class PlatformProviderTests
             return code == 0x11004c ? PipeStatus : 0;
         }
 
-        internal override int SetJob(nint job, int informationClass, void* data, uint length)
+        internal override int SetJob(JobSafeHandle job, int informationClass, void* data, uint length)
         {
-            Assert.Equal(Job, job);
+            Assert.Equal(JobValue, job.DangerousGetHandle());
             return 0;
         }
 
-        internal override int QueryJob(nint job, int informationClass, void* data, uint length, uint* returned)
+        internal override int QueryJob(JobSafeHandle job, int informationClass, void* data, uint length, uint* returned)
         {
-            Assert.Equal(Job, job);
+            Assert.Equal(JobValue, job.DangerousGetHandle());
             if (informationClass == 0x1e)
             {
                 Assert.True(Id.TryWriteBytes(new Span<byte>(data, (int)length)));
@@ -462,7 +476,7 @@ public sealed unsafe class PlatformProviderTests
                 const string root = @"\Silos\7";
                 var buffer = (char*)((byte*)data + 0x10);
                 root.AsSpan().CopyTo(new Span<char>(buffer, root.Length));
-                *(UnicodeString*)data = new UnicodeString(buffer, root.Length);
+                *(UNICODE_STRING*)data = NativeBuffer.UnicodeString(buffer, root.Length);
                 *returned = 0x34;
             }
 
@@ -497,16 +511,16 @@ public sealed unsafe class PlatformProviderTests
             return 0;
         }
 
-        internal override uint GetCompartment(nint job)
+        internal override uint GetCompartment(JobSafeHandle job)
         {
-            Assert.Equal(Job, job);
+            Assert.Equal(JobValue, job.DangerousGetHandle());
             Trace.Add("get");
             return Compartment;
         }
 
-        internal override uint SetCompartment(nint job, uint id)
+        internal override uint SetCompartment(JobSafeHandle job, uint id)
         {
-            Assert.Equal(Job, job);
+            Assert.Equal(JobValue, job.DangerousGetHandle());
             Trace.Add("set:" + id);
             return BindError;
         }
@@ -543,7 +557,7 @@ public sealed unsafe class PlatformProviderTests
             return char.ToLowerInvariant(value);
         }
 
-        internal override int OpenKey(out nint key, uint access, ObjectAttributes* attributes)
+        internal override int OpenKey(out nint key, uint access, OBJECT_ATTRIBUTES* attributes)
         {
             var name = Read(attributes->ObjectName);
             key = 0;
@@ -599,7 +613,7 @@ public sealed unsafe class PlatformProviderTests
             return 0;
         }
 
-        internal override int CreateKey(nint* key, uint access, ObjectAttributes* attributes, uint options, uint* disposition)
+        internal override int CreateKey(nint* key, uint access, OBJECT_ATTRIBUTES* attributes, uint options, uint* disposition)
         {
             Assert.Equal(0, *key);
             var name = Read(attributes->ObjectName);
@@ -620,7 +634,7 @@ public sealed unsafe class PlatformProviderTests
             return 0;
         }
 
-        internal override int SetValue(nint key, UnicodeString* name, uint type, void* data, uint length)
+        internal override int SetValue(nint key, UNICODE_STRING* name, uint type, void* data, uint length)
         {
             Assert.Equal(67, key);
             WrittenValue = (Read(name), type, Convert.ToHexString(new ReadOnlySpan<byte>(data, (int)length)));
@@ -642,14 +656,14 @@ public sealed unsafe class PlatformProviderTests
 
         internal byte[]? RootPacket;
 
-        internal override int SetJob(nint job, int informationClass, void* data, uint length)
+        internal override int SetJob(JobSafeHandle job, int informationClass, void* data, uint length)
         {
             Assert.Equal(37, informationClass);
             RootPacket = new ReadOnlySpan<byte>(data, checked((int)length)).ToArray();
             return base.SetJob(job, informationClass, data, length);
         }
 
-        internal override int OpenDirectory(out nint handle, uint access, ObjectAttributes* attributes)
+        internal override int OpenDirectory(out nint handle, uint access, OBJECT_ATTRIBUTES* attributes)
         {
             handle = Read(attributes->ObjectName) switch
             {
@@ -661,7 +675,7 @@ public sealed unsafe class PlatformProviderTests
             return handle == 0 ? Missing : 0;
         }
 
-        internal override int CreateDirectory(out nint handle, uint access, ObjectAttributes* attributes, nint shadow, uint flags)
+        internal override int CreateDirectory(out nint handle, uint access, OBJECT_ATTRIBUTES* attributes, nint shadow, uint flags)
         {
             var name = Read(attributes->ObjectName);
             Trace.Add($"create:{name}:{shadow}");
@@ -675,7 +689,7 @@ public sealed unsafe class PlatformProviderTests
             Trace.Add("close:" + handle);
         }
 
-        internal override int OpenObjectLink(out nint handle, uint access, ObjectAttributes* attributes)
+        internal override int OpenObjectLink(out nint handle, uint access, OBJECT_ATTRIBUTES* attributes)
         {
             Assert.Equal(@"\source", Read(attributes->ObjectName));
             Assert.Equal(1u, access);
@@ -683,7 +697,7 @@ public sealed unsafe class PlatformProviderTests
             return SourceStatus;
         }
 
-        internal override int QueryObjectLink(nint handle, UnicodeString* target, uint* length)
+        internal override int QueryObjectLink(nint handle, UNICODE_STRING* target, uint* length)
         {
             Assert.Equal(31, handle);
             Assert.Equal((uint)target->MaximumLength, *length);
@@ -700,7 +714,7 @@ public sealed unsafe class PlatformProviderTests
             return 0;
         }
 
-        internal override int CreateObjectLink(nint* handle, uint access, ObjectAttributes* attributes, UnicodeString* target)
+        internal override int CreateObjectLink(nint* handle, uint access, OBJECT_ATTRIBUTES* attributes, UNICODE_STRING* target)
         {
             Assert.Equal(0, *handle);
             *handle = 44;
@@ -725,7 +739,7 @@ public sealed unsafe class PlatformProviderTests
         }
     }
 
-    private static string Read(UnicodeString* value) => new string(value->Buffer, 0, value->Length / 2);
+    private static string Read(UNICODE_STRING* value) => new string(value->Buffer, 0, value->Length / 2);
 
     private sealed class ProviderLog(Action<EventWrittenEventArgs>? record = null) : EventListener
     {

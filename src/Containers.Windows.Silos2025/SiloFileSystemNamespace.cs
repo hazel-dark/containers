@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Containers.Windows.Silos.DescriptionModel;
 
@@ -15,7 +14,7 @@ public static class SiloFileSystemNamespace
     public static void Setup(string scratchRoot,
         IReadOnlyList<WciLayer> layers,
         IReadOnlyList<BindBatch>? batches = null,
-        SafeHandle? job = null)
+        JobSafeHandle? job = null)
     {
         ArgumentNullException.ThrowIfNull(scratchRoot);
         ArgumentNullException.ThrowIfNull(layers);
@@ -23,7 +22,7 @@ public static class SiloFileSystemNamespace
         try
         {
             job?.DangerousAddRef(ref borrowed);
-            NativeApi.SetupFileSystemUnion(job?.DangerousGetHandle() ?? 0, scratchRoot, layers, batches ?? []);
+            NativeApi.SetupFileSystemUnion(job, scratchRoot, layers, batches ?? []);
         }
         finally
         {

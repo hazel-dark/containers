@@ -18,7 +18,7 @@ public sealed unsafe class SiloTerminationNotification : IDisposable
     private readonly CallbackState _state;
     private readonly Registration _registration;
 
-    internal SiloTerminationNotification(nint job, IJobNotificationApi api, JobNotificationRegistrations registrations)
+    internal SiloTerminationNotification(JobSafeHandle job, IJobNotificationApi api, JobNotificationRegistrations registrations)
     {
         _state = new CallbackState(api);
         _registration = new Registration(_state, registrations);
@@ -69,7 +69,7 @@ public sealed unsafe class SiloTerminationNotification : IDisposable
 
     private sealed class CallbackState
     {
-        internal nint Job;
+        internal JobSafeHandle Job = null!;
         internal readonly IJobNotificationApi Api;
         internal readonly Channel<SiloTerminationReason> Reasons = Channel.CreateUnbounded<SiloTerminationReason>();
 
@@ -92,7 +92,7 @@ public sealed unsafe class SiloTerminationNotification : IDisposable
             _registrations = registrations;
         }
 
-        internal void Attach(nint job)
+        internal void Attach(JobSafeHandle job)
         {
             var api = _state.Api;
             _ = api.GetId(job);
@@ -121,7 +121,7 @@ public sealed unsafe class SiloTerminationNotification : IDisposable
                     _context.Free();
 
                 _registrations.Release(_state.Job);
-                api.Close(_state.Job);
+                _state.Job.Dispose();
                 throw;
             }
         }
@@ -148,7 +148,7 @@ public sealed unsafe class SiloTerminationNotification : IDisposable
             Drain();
             _state.Api.ReleaseJobNotification(handle);
             _context.Free();
-            _state.Api.Close(_state.Job);
+            _state.Job.Dispose();
             return true;
         }
     }
@@ -170,13 +170,13 @@ public sealed unsafe class SiloTerminationNotification : IDisposable
     }
 }
 
-// Only live duplicate handles are recorded. Keeping the SafeHandle out of this
-// collection allows its finalizer to drain and release an abandoned subscription.
+// Track duplicate jobs without rooting the subscriptions that drain and release them.
+[SupportedOSPlatform(SiloPlatform.SupportedVersion)]
 internal sealed class JobNotificationRegistrations
 {
-    private readonly List<nint> jobs = [];
+    private readonly List<JobSafeHandle> jobs = [];
 
-    internal nint Reserve(nint job, IJobNotificationApi api)
+    internal JobSafeHandle Reserve(JobSafeHandle job, IJobNotificationApi api)
     {
         lock (jobs)
         {
@@ -194,7 +194,7 @@ internal sealed class JobNotificationRegistrations
         }
     }
 
-    internal void Release(nint job)
+    internal void Release(JobSafeHandle job)
     {
         lock (jobs)
             jobs.Remove(job);

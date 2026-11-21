@@ -90,3 +90,23 @@ FILE_FULL_EA_INFORMATION
 FILE_PIPE_SILO_ARRIVAL_INPUT
 SERVERSILO_BASIC_INFORMATION
 
+NtClose
+NtDuplicateObject
+NtQueryEaFile
+NtWaitForSingleObject
+NtCreateFile
+NtFsControlFile
+NtOpenDirectoryObject
+NtOpenSymbolicLinkObject
+NtQuerySymbolicLinkObject
+NtQuerySecurityObject
+NtOpenKey
+NtCreateKey
+NtDeleteKey
+NtEnumerateKey
+NtQueryKey
+NtSetValueKey
+RtlFreeUnicodeString
+RtlNtStatusToDosErrorNoTeb
+GetJobCompartmentId
+SetJobCompartmentId

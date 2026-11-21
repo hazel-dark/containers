@@ -1,3 +1,4 @@
+using Windows.Win32.Foundation;
 using Windows.Win32.Storage.FileSystem;
 using Containers.Windows.Silos.DescriptionModel;
 using Xunit;
@@ -6,6 +7,8 @@ namespace Containers.Windows.Silos.Tests;
 
 public sealed class HostFileFixupTests
 {
+    private static readonly JobSafeHandle Job = new JobSafeHandle(17, ownsHandle: false);
+
     private const string Host = @"C:\Windows\";
     private const string Container = @"D:\scratch\Windows\";
     private const string Catalogs = @"System32\CatRoot\{F750E6C3-38EE-11D1-85E5-00C04FC295EE}\";
@@ -15,7 +18,7 @@ public sealed class HostFileFixupTests
     {
         var calls = new Calls();
         var api = new NativeApi(calls);
-        api.InjectHostFiles(17, new DownlevelConfiguration(@"D:\scratch", ["a", "missing", "no-source", "b", "c"]));
+        api.InjectHostFiles(Job, new DownlevelConfiguration(@"D:\scratch", ["a", "missing", "no-source", "b", "c"]));
         Assert.Equal([Host + "a", Host + "missing", Host + "no-source", Host + "b", Host + "c"], calls.Hints);
         Assert.Equal(@"D:\scratch\", calls.Attached);
         string[] candidates = ["a", Catalogs + "A.cat", "missing", "no-source", "b", "c", Catalogs + "a.cat"];
@@ -35,7 +38,7 @@ public sealed class HostFileFixupTests
     public void AFailedBindingStopsTheRemainingMappings()
     {
         var calls = new Calls { FailBinding = "d" };
-        var error = Assert.Throws<SiloException>(() => new NativeApi(calls).InjectHostFiles(17, new DownlevelConfiguration(@"D:\scratch", ["x", "d", "e"])));
+        var error = Assert.Throws<SiloException>(() => new NativeApi(calls).InjectHostFiles(Job, new DownlevelConfiguration(@"D:\scratch", ["x", "d", "e"])));
         Assert.Equal(unchecked((int)0x80070005), error.HResult);
         Assert.Equal([Container + "x", Container + "d"], calls.Bindings.Select(pair => pair.Destination));
     }
@@ -70,7 +73,7 @@ public sealed class HostFileFixupTests
     public void SystemRootPassesANulTerminatedUnicodeStringToClass45()
     {
         var calls = new Calls();
-        new NativeApi(calls).SetSystemRoot(17, "A\0B");
+        new NativeApi(calls).SetSystemRoot(Job, "A\0B");
         Assert.Equal(("A", (ushort)2, (ushort)4), calls.SystemRoot);
     }
 
@@ -79,7 +82,7 @@ public sealed class HostFileFixupTests
     public void UtilityVmSkipsAllHostFileWork()
     {
         var calls = new Calls { UtilityVm = true };
-        new NativeApi(calls).InjectHostFiles(17, new DownlevelConfiguration(@"D:\scratch", ["a"]));
+        new NativeApi(calls).InjectHostFiles(Job, new DownlevelConfiguration(@"D:\scratch", ["a"]));
         Assert.Empty(calls.Hints);
         Assert.Null(calls.Attached);
     }
@@ -118,18 +121,18 @@ public sealed class HostFileFixupTests
             return path != Container + "missing" && path != Host + "no-source";
         }
 
-        internal override int BindHostFile(nint job, string destination, string source)
+        internal override int BindHostFile(JobSafeHandle job, string destination, string source)
         {
-            Assert.Equal((nint)17, job);
+            Assert.Equal((nint)17, job.DangerousGetHandle());
             Bindings.Add((destination, source));
             return destination == Container + FailBinding ? unchecked((int)0x80070005) : 0;
         }
 
-        internal override int SetJob(nint job, int informationClass, void* data, uint length)
+        internal override int SetJob(JobSafeHandle job, int informationClass, void* data, uint length)
         {
             Assert.Equal(45, informationClass);
             Assert.Equal(16u, length);
-            var name = *(UnicodeString*)data;
+            var name = *(UNICODE_STRING*)data;
             SystemRoot = (new string(name.Buffer, 0, name.Length / 2), name.Length, name.MaximumLength);
             return 0;
         }

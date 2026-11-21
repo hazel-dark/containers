@@ -7,7 +7,7 @@ internal static class SiloPlatform
     internal const string SupportedVersion = "windows10.0.20348";
 
     [System.Runtime.Versioning.SupportedOSPlatform(SupportedVersion)]
-    internal static SiloTerminationReason? GetNotificationReason(IJobNotificationApi api, nint job, nuint code, int status)
+    internal static SiloTerminationReason? GetNotificationReason(IJobNotificationApi api, JobSafeHandle job, nuint code, int status)
         => SiloTerminationNotification.Classify(api.IsServer(job), code, status);
 
     internal static SiloTerminationReason OtherServerTerminationReason(int status) =>

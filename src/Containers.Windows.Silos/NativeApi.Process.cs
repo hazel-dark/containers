@@ -7,7 +7,7 @@ namespace Containers.Windows.Silos;
 
 internal sealed unsafe partial class NativeApi
 {
-    public nint Launch(nint job, string command, uint flags)
+    public nint Launch(JobSafeHandle job, string command, uint flags)
     {
         nuint length = NativeJobConstants.SingleProcThreadAttributeListSize;
         var attributes = stackalloc byte[NativeJobConstants.SingleProcThreadAttributeListSize];
@@ -17,7 +17,8 @@ internal sealed unsafe partial class NativeApi
         HANDLE token = default;
         try
         {
-            CheckBool(PInvoke.UpdateProcThreadAttribute(list, 0, PInvoke.PROC_THREAD_ATTRIBUTE_JOB_LIST, &job, (nuint)sizeof(nint), null, null).Value, "UpdateProcThreadAttribute(JOB_LIST)");
+            var jobValue = job.DangerousGetHandle();
+            CheckBool(PInvoke.UpdateProcThreadAttribute(list, 0, PInvoke.PROC_THREAD_ATTRIBUTE_JOB_LIST, &jobValue, (nuint)sizeof(nint), null, null).Value, "UpdateProcThreadAttribute(JOB_LIST)");
             flags |= (uint)PROCESS_CREATION_FLAGS.EXTENDED_STARTUPINFO_PRESENT;
 
             if (IsServer(job))
@@ -46,8 +47,10 @@ internal sealed unsafe partial class NativeApi
                 flags |= (uint)PROCESS_CREATION_FLAGS.CREATE_NO_WINDOW;
             }
 
-            var startup = new StartupInfoEx { Attributes = list };
+            var startup = new StartupInfoEx();
+            startup.Attributes = list;
             startup.Startup.cb = NativeJobConstants.StartupInfoExSize;
+
             using var commandLine = new NativeScratchBuffer<char>(stackalloc char[256], checked(command.Length + 1));
             command.AsSpan().CopyTo(commandLine.Span);
             commandLine.Span[^1] = '\0';

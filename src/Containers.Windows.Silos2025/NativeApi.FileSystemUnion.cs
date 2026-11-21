@@ -9,14 +9,16 @@ namespace Containers.Windows.Silos;
 
 internal sealed unsafe partial class NativeApi
 {
+    private static readonly JobSafeHandle NoJob = new JobSafeHandle(0, ownsHandle: false);
     private const uint DeltaHiveFormat = 1;
 
     private static readonly string[] SandboxHives = ["Software_Delta", "System_Delta", "DefaultUser_Delta", "Sam_Delta", "Security_Delta"];
 
-    internal static void SetupFileSystemUnion(nint job, string scratchRoot, IReadOnlyList<WciLayer> layers, IReadOnlyList<BindBatch> batches)
+    internal static void SetupFileSystemUnion(JobSafeHandle? job, string scratchRoot, IReadOnlyList<WciLayer> layers, IReadOnlyList<BindBatch> batches)
     {
         var bindBatches = batches.Select(batch => batch with { Exceptions = batch.Exceptions.ToArray() }).ToArray();
-        if (job == 0 && bindBatches.Length != 0)
+        job ??= NoJob;
+        if (job.DangerousGetHandle() == 0 && bindBatches.Length != 0)
             SiloException.CheckWin32((int)WIN32_ERROR.ERROR_INVALID_PARAMETER, "Job handle required for Bind batches");
 
         var mountPath = BeforeTerminator(scratchRoot);

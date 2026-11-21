@@ -1,3 +1,5 @@
+using Wdk = Windows.Wdk.PInvoke;
+using Windows.Wdk.Foundation;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 using Windows.Wdk.Storage.FileSystem;
@@ -16,12 +18,13 @@ internal sealed unsafe partial class NativeApi
 {
     private static readonly int RegistryIntegerOverflow = NTSTATUS.STATUS_INTEGER_OVERFLOW.Value;
 
-    public void SetupRegistry(nint job, RegistryConfiguration configuration)
+    public void SetupRegistry(JobSafeHandle job, RegistryConfiguration configuration)
     {
         using var driver = _platform.OpenRegistryDriver();
         var stacks = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        Ioctl(driver, WcVRegRegisterJob, job.AsBytes());
+        var jobValue = job.DangerousGetHandle();
+        Ioctl(driver, WcVRegRegisterJob, jobValue.AsBytes());
         try
         {
             foreach (var stack in configuration.HiveStacks)
@@ -55,7 +58,7 @@ internal sealed unsafe partial class NativeApi
             chars[index] = state.platform.LowerCharacter(state.name[index]);
     });
 
-    private string SetupHiveStack(SafeFileHandle driver, nint job, RegistryHiveStack stack)
+    private string SetupHiveStack(SafeFileHandle driver, JobSafeHandle job, RegistryHiveStack stack)
     {
         var path = "";
         Span<byte> stackBuffer = stackalloc byte[256];
@@ -94,41 +97,38 @@ internal sealed unsafe partial class NativeApi
         return path;
     }
 
-    internal static NativeScratchBuffer<byte> PackHive(Span<byte> stackBuffer, nint job, RegistryHive hive, string mountedPath, string previous, uint previousIsExistingHive)
+    internal static NativeScratchBuffer<byte> PackHive(Span<byte> stackBuffer, JobSafeHandle job, RegistryHive hive, string mountedPath, string previous, uint previousIsExistingHive)
     {
-        var header = new VrLoadDifferencingHiveHeader
-        {
-            Job = new HANDLE(job),
-            NextLayerIsHost = previousIsExistingHive,
-            Flags = (hive.InheritTrust ? WcVRegInheritTrust : 0) | (hive.TrustedHive ? WcVRegTrustedHive : 0) | (hive.WriteThrough ? WcVRegWriteThrough : 0),
-            LoadFlags = PInvoke.REG_HIVE_NO_RM | (hive.ReadOnly ? (uint)PInvoke.REG_OPEN_READ_ONLY : 0) | (hive.Immutable ? (uint)PInvoke.REG_IMMUTABLE : 0),
-            KeyPathLength = checked((ushort)(mountedPath.Length * sizeof(char))),
-            HivePathLength = checked((ushort)(hive.FilePath.Length * sizeof(char))),
-            NextLayerKeyPathLength = checked((ushort)(previous.Length * sizeof(char))),
-            FileAccessToken = new HANDLE(unchecked((nint)hive.FileAccessToken)),
-        };
+        var header = new VrLoadDifferencingHiveHeader();
+        header.Job = new HANDLE(job.DangerousGetHandle());
+        header.NextLayerIsHost = previousIsExistingHive;
+        header.Flags = (hive.InheritTrust ? WcVRegInheritTrust : 0) | (hive.TrustedHive ? WcVRegTrustedHive : 0) | (hive.WriteThrough ? WcVRegWriteThrough : 0);
+        header.LoadFlags = PInvoke.REG_HIVE_NO_RM | (hive.ReadOnly ? (uint)PInvoke.REG_OPEN_READ_ONLY : 0) | (hive.Immutable ? (uint)PInvoke.REG_IMMUTABLE : 0);
+        header.KeyPathLength = checked((ushort)(mountedPath.Length * sizeof(char)));
+        header.HivePathLength = checked((ushort)(hive.FilePath.Length * sizeof(char)));
+        header.NextLayerKeyPathLength = checked((ushort)(previous.Length * sizeof(char)));
+        header.FileAccessToken = new HANDLE(unchecked((nint)hive.FileAccessToken));
         return NativeBuffer.Strings(stackBuffer, in header, mountedPath, hive.FilePath, previous);
     }
 
-    internal static NativeScratchBuffer<byte> PackRegistryRedirection(Span<byte> stackBuffer, nint job, RegistryRedirection redirect, string target)
+    internal static NativeScratchBuffer<byte> PackRegistryRedirection(Span<byte> stackBuffer, JobSafeHandle job, RegistryRedirection redirect, string target)
     {
-        var header = new VrCreateNamespaceNodeHeader
-        {
-            Job = new HANDLE(job),
-            ContainerPathLength = RegistryStringLength(redirect.Path),
-            HostPathLength = RegistryStringLength(target),
-            Flags = (redirect.Trusted ? WcVRegTrustedRedirection : 0) | (redirect.ExitNode ? WcVRegExitNodeRedirection : 0),
-            AccessMask = redirect.AccessMask,
-        };
+        var header = new VrCreateNamespaceNodeHeader();
+        header.Job = new HANDLE(job.DangerousGetHandle());
+        header.ContainerPathLength = RegistryStringLength(redirect.Path);
+        header.HostPathLength = RegistryStringLength(target);
+        header.Flags = (redirect.Trusted ? WcVRegTrustedRedirection : 0) | (redirect.ExitNode ? WcVRegExitNodeRedirection : 0);
+        header.AccessMask = redirect.AccessMask;
         return NativeBuffer.Strings(stackBuffer, in header, redirect.Path, target);
     }
 
-    public void CleanupRegistry(nint job)
+    public void CleanupRegistry(JobSafeHandle job)
     {
         try
         {
             using var driver = _platform.OpenRegistryDriver();
-            Ioctl(driver, WcVRegDetachJob, job.AsBytes());
+            var jobValue = job.DangerousGetHandle();
+            Ioctl(driver, WcVRegDetachJob, jobValue.AsBytes());
         }
         catch (Exception error)
         {
@@ -137,34 +137,39 @@ internal sealed unsafe partial class NativeApi
         }
     }
 
-    public nint GetRegistryHandle(nint job, uint type)
+    public nint GetRegistryHandle(JobSafeHandle job, uint type)
     {
         using var driver = _platform.OpenRegistryDriver();
         return GetRegistryHandle(driver, job, type);
     }
 
-    private nint GetRegistryHandle(SafeFileHandle driver, nint job, uint type)
+    private nint GetRegistryHandle(SafeFileHandle driver, JobSafeHandle job, uint type)
     {
-        var request = new VrGetVirtualRoot { Job = new HANDLE(job), Index = type };
+        var request = new VrGetVirtualRoot();
+        request.Job = new HANDLE(job.DangerousGetHandle());
+        request.Index = type;
         VrGetVirtualRootResult output = default;
         Ioctl(driver, WcVRegGetRegistryHandle, request.AsBytes(), output.AsBytes());
         return output.Key;
     }
 
-    public void ModifyRegistryFlags(nint job, uint add, uint remove)
+    public void ModifyRegistryFlags(JobSafeHandle job, uint add, uint remove)
     {
         using var driver = _platform.OpenRegistryDriver();
-        var request = new VrModifyFlags { Job = new HANDLE(job), AddFlags = add, RemoveFlags = remove };
+        var request = new VrModifyFlags();
+        request.Job = new HANDLE(job.DangerousGetHandle());
+        request.AddFlags = add;
+        request.RemoveFlags = remove;
         Ioctl(driver, WcVRegModifyFlags, request.AsBytes());
     }
 
-    public void AddRuntimeVirtualKeys(nint job, IReadOnlyList<RuntimeVirtualKey> keys)
+    public void AddRuntimeVirtualKeys(JobSafeHandle job, IReadOnlyList<RuntimeVirtualKey> keys)
     {
         using var driver = _platform.OpenRegistryDriver();
         Ioctl(driver, WcVRegAddRuntimeVirtualKeys, PackRuntimeVirtualKeys(job, keys));
     }
 
-    internal static byte[] PackRuntimeVirtualKeys(nint job, IReadOnlyList<RuntimeVirtualKey> keys)
+    internal static byte[] PackRuntimeVirtualKeys(JobSafeHandle job, IReadOnlyList<RuntimeVirtualKey> keys)
     {
         long size = sizeof(VrCreateMultipleNamespaceNodesHeader);
         foreach (var key in keys)
@@ -175,19 +180,19 @@ internal sealed unsafe partial class NativeApi
         }
 
         var data = new byte[(int)size];
-        var header = new VrCreateMultipleNamespaceNodesHeader { Job = new HANDLE(job), NumNewKeys = (uint)keys.Count };
+        var header = new VrCreateMultipleNamespaceNodesHeader();
+        header.Job = new HANDLE(job.DangerousGetHandle());
+        header.NumNewKeys = (uint)keys.Count;
         MemoryMarshal.Write(data, in header);
 
         var offset = sizeof(VrCreateMultipleNamespaceNodesHeader);
         foreach (var key in keys)
         {
-            var node = new NamespaceNodeDataHeader
-            {
-                AccessMask = key.AccessMask,
-                ContainerPathLength = checked((ushort)(key.Path.Length * sizeof(char))),
-                HostPathLength = checked((ushort)(key.Target.Length * sizeof(char))),
-                Flags = 0,
-            };
+            var node = new NamespaceNodeDataHeader();
+            node.AccessMask = key.AccessMask;
+            node.ContainerPathLength = checked((ushort)(key.Path.Length * sizeof(char)));
+            node.HostPathLength = checked((ushort)(key.Target.Length * sizeof(char)));
+            node.Flags = 0;
 
             MemoryMarshal.Write(data.AsSpan(offset), in node);
             offset += sizeof(NamespaceNodeDataHeader);
@@ -225,8 +230,8 @@ internal sealed unsafe partial class NativeApi
         fixed (char* p = configuration.Name)
         fixed (byte* sd = security)
         {
-            var name = new UnicodeString(p, configuration.Name.Length);
-            var attributes = new ObjectAttributes(&name, parent, security: (nint)sd);
+            var name = NativeBuffer.UnicodeString(p, configuration.Name.Length);
+            var attributes = NativeBuffer.ObjectAttributes(&name, parent, security: sd);
             nint key = 0;
             try
             {
@@ -265,8 +270,8 @@ internal sealed unsafe partial class NativeApi
     {
         fixed (char* p = link.Path)
         {
-            var name = new UnicodeString(p, link.Path.Length);
-            var attributes = new ObjectAttributes(&name);
+            var name = NativeBuffer.UnicodeString(p, link.Path.Length);
+            var attributes = NativeBuffer.ObjectAttributes(&name);
             for (var attempt = 0; attempt < 2; attempt++)
             {
                 nint key = 0;
@@ -305,7 +310,7 @@ internal sealed unsafe partial class NativeApi
         fixed (char* p = name)
         fixed (byte* bytes = data)
         {
-            var unicode = new UnicodeString(p, name.Length);
+            var unicode = NativeBuffer.UnicodeString(p, name.Length);
             SiloException.CheckNt(_platform.SetValue(key, &unicode, type, bytes, (uint)data.Length), "NtSetValueKey(" + name + ")");
         }
     }
@@ -314,8 +319,8 @@ internal sealed unsafe partial class NativeApi
     {
         fixed (char* p = path)
         {
-            var name = new UnicodeString(p, path.Length);
-            var attributes = new ObjectAttributes(&name, parent);
+            var name = NativeBuffer.UnicodeString(p, path.Length);
+            var attributes = NativeBuffer.ObjectAttributes(&name, parent);
             var status = _platform.OpenKey(out var key, access, &attributes);
             if (status < 0)
                 Close(key);
@@ -381,50 +386,54 @@ internal sealed unsafe partial class NativeApi
         internal virtual SafeFileHandle OpenRegistryDriver()
         {
             const string path = @"\Device\VRegDriver";
-            var driver = new SafeFileHandle(0, ownsHandle: true);
             fixed (char* p = path)
             {
-                var name = new UnicodeString(p, path.Length);
-                var attributes = new ObjectAttributes(&name, attributes: 0);
-                var status = NativeMethods.NtCreateFile(
-                    out var handle,
-                    (uint)(FILE_ACCESS_RIGHTS.SYNCHRONIZE | FILE_ACCESS_RIGHTS.FILE_READ_DATA | FILE_ACCESS_RIGHTS.FILE_WRITE_DATA),
-                    &attributes,
+                var name = NativeBuffer.UnicodeString(p, path.Length);
+                var attributes = NativeBuffer.ObjectAttributes(&name, attributes: 0);
+                var status = Wdk.NtCreateFile(
+                    out var driver,
+                    FILE_ACCESS_RIGHTS.SYNCHRONIZE | FILE_ACCESS_RIGHTS.FILE_READ_DATA | FILE_ACCESS_RIGHTS.FILE_WRITE_DATA,
+                    in attributes,
                     out _,
                     null,
                     0,
                     0,
-                    (uint)NTCREATEFILE_CREATE_DISPOSITION.FILE_OPEN_IF,
-                    (uint)NTCREATEFILE_CREATE_OPTIONS.FILE_SYNCHRONOUS_IO_ALERT,
-                    null,
-                    0);
-
-                Marshal.InitHandle(driver, handle);
+                    NTCREATEFILE_CREATE_DISPOSITION.FILE_OPEN_IF,
+                    NTCREATEFILE_CREATE_OPTIONS.FILE_SYNCHRONOUS_IO_ALERT);
                 if (status < 0)
                 {
                     driver.Dispose();
                     SiloException.CheckNt(status, "Open VRegDriver");
                 }
-            }
 
-            return driver;
+                return driver;
+            }
         }
 
-        internal virtual int OpenKey(out nint key, uint access, ObjectAttributes* attributes)
-            => NativeMethods.NtOpenKey(out key, access, attributes);
+        internal virtual int OpenKey(out nint key, uint access, OBJECT_ATTRIBUTES* attributes)
+        {
+            fixed (nint* output = &key)
+                return Wdk.NtOpenKey((HANDLE*)output, access, attributes);
+        }
 
-        internal virtual int CreateKey(nint* key, uint access, ObjectAttributes* attributes, uint options, uint* disposition)
-            => NativeMethods.NtCreateKey(key, access, attributes, 0, null, options, disposition);
+        internal virtual int CreateKey(nint* key, uint access, OBJECT_ATTRIBUTES* attributes, uint options, uint* disposition)
+            => Wdk.NtCreateKey((HANDLE*)key, access, attributes, 0, null, options, disposition);
 
-        internal virtual int DeleteKey(nint key) => NativeMethods.NtDeleteKey(key);
+        internal virtual int DeleteKey(nint key) => Wdk.NtDeleteKey((HANDLE)key);
 
         internal virtual int QueryKey(nint key, int informationClass, void* data, uint length, out uint needed)
-            => NativeMethods.NtQueryKey(key, informationClass, data, length, out needed);
+        {
+            fixed (uint* returned = &needed)
+                return Wdk.NtQueryKey((HANDLE)key, (KEY_INFORMATION_CLASS)informationClass, data, length, returned);
+        }
 
         internal virtual int EnumerateKey(nint key, uint index, int informationClass, void* data, uint length, out uint needed)
-            => NativeMethods.NtEnumerateKey(key, index, informationClass, data, length, out needed);
+        {
+            fixed (uint* returned = &needed)
+                return Wdk.NtEnumerateKey((HANDLE)key, index, (KEY_INFORMATION_CLASS)informationClass, data, length, returned);
+        }
 
-        internal virtual int SetValue(nint key, UnicodeString* name, uint type, void* data, uint length)
-            => NativeMethods.NtSetValueKey(key, name, 0, type, data, length);
+        internal virtual int SetValue(nint key, UNICODE_STRING* name, uint type, void* data, uint length)
+            => Wdk.NtSetValueKey((HANDLE)key, name, 0, type, data, length);
     }
 }

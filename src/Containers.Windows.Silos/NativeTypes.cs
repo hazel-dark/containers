@@ -1,13 +1,40 @@
 using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using Windows.Wdk.Foundation;
 using Windows.Win32.Foundation;
+using Windows.Win32.Security;
 using Windows.Win32.System.JobObjects;
 
 namespace Containers.Windows.Silos;
 
-internal static class NativeBuffer
+internal static unsafe class NativeBuffer
 {
+    internal static UNICODE_STRING UnicodeString(char* buffer, int length)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(length, ushort.MaxValue / sizeof(char) - 1);
+        var s = new UNICODE_STRING
+        {
+            Length = checked((ushort)(length * sizeof(char))),
+            MaximumLength = checked((ushort)((length + 1) * sizeof(char))),
+            Buffer = buffer,
+        };
+        return s;
+    }
+
+    internal static OBJECT_ATTRIBUTES ObjectAttributes(UNICODE_STRING* name, nint root = 0, OBJECT_ATTRIBUTE_FLAGS attributes = OBJECT_ATTRIBUTE_FLAGS.OBJ_CASE_INSENSITIVE, void* security = null)
+    {
+        var objectAttributes = new OBJECT_ATTRIBUTES
+        {
+            Length = (uint)sizeof(OBJECT_ATTRIBUTES),
+            ObjectName = name,
+            RootDirectory = new HANDLE(root),
+            Attributes = attributes,
+            SecurityDescriptor = (SECURITY_DESCRIPTOR*)security,
+        };
+        return objectAttributes;
+    }
+
     internal static Span<byte> AsBytes<T>(this ref T value) where T : unmanaged =>
         MemoryMarshal.AsBytes(new Span<T>(ref value));
 
@@ -83,52 +110,7 @@ internal struct MountMgrCreatePointInput
 internal struct SiloObjectRootDirectory
 {
     [FieldOffset(0)] internal uint ControlFlags;
-    [FieldOffset(0)] internal UnicodeString Path;
-}
-
-[StructLayout(LayoutKind.Sequential)]
-internal unsafe struct UnicodeString
-{
-    private const int MaximumCharacterLength = (ushort.MaxValue / sizeof(char)) - 1;
-
-    internal ushort Length, MaximumLength;
-    internal char* Buffer;
-
-    internal UnicodeString(char* buffer, int length)
-    {
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(length, MaximumCharacterLength);
-
-        Length = checked((ushort)(length * sizeof(char)));
-        MaximumLength = checked((ushort)(Length + sizeof(char)));
-        Buffer = buffer;
-    }
-}
-
-[StructLayout(LayoutKind.Sequential)]
-internal unsafe struct ObjectAttributes
-{
-    internal uint Length;
-    internal nint RootDirectory;
-    internal UnicodeString* ObjectName;
-    internal uint Attributes;
-    internal nint SecurityDescriptor, SecurityQualityOfService;
-
-    internal ObjectAttributes(UnicodeString* name, nint root = 0, uint attributes = (uint)OBJECT_ATTRIBUTE_FLAGS.OBJ_CASE_INSENSITIVE, nint security = 0)
-    {
-        Length = (uint)sizeof(ObjectAttributes);
-        RootDirectory = root;
-        ObjectName = name;
-        Attributes = attributes;
-        SecurityDescriptor = security;
-        SecurityQualityOfService = 0;
-    }
-}
-
-[StructLayout(LayoutKind.Sequential)]
-internal struct IoStatusBlock
-{
-    internal nint Status;
-    internal nuint Information;
+    [FieldOffset(0)] internal UNICODE_STRING Path;
 }
 
 // NtCoreLib ServerSiloInitInformation / phnt SERVERSILO_INIT_INFORMATION;
@@ -182,7 +164,7 @@ internal unsafe struct RegistryQueryEntry
 [StructLayout(LayoutKind.Sequential)]
 internal struct RelativeNtName
 {
-    internal UnicodeString Name;
+    internal UNICODE_STRING Name;
     internal nint ContainingDirectory;
     internal nint CurrentDirectoryReference;
 }

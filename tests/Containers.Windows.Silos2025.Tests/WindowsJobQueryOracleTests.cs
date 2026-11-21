@@ -40,7 +40,7 @@ public sealed partial class WindowsJobQueryOracleTests
         File.WriteAllText(Path.Combine(layer, "removed"), "deleted in union");
         var config = Path.Combine(scratch, "Windows", "container_tombstones.json");
         WciLayer[] layers = [new WciLayer(Guid.NewGuid(), layer)];
-        using var job = new SafeFileHandle(NativeApi.Instance.CreateJob(), ownsHandle: true);
+        using var job = NativeApi.Instance.CreateJob();
         using var silo = WindowsSilo.ConfigureJob(job, new SiloDescription());
         try
         {
@@ -68,7 +68,7 @@ public sealed partial class WindowsJobQueryOracleTests
     [Server2025Fact]
     public void JobQueriesMatchInboxBeforeAndAfterAChildExits()
     {
-        using var job = new SafeFileHandle(NativeApi.Instance.CreateJob(), ownsHandle: true);
+        using var job = NativeApi.Instance.CreateJob();
         using var silo = WindowsSilo.ConfigureJob(job, new SiloDescription());
         AssertFirstBoot(expected: true);
         var sessionResult = WcGetContainerServiceSessionId(job, out var nativeSession);
@@ -93,11 +93,11 @@ public sealed partial class WindowsJobQueryOracleTests
 
     [LibraryImport("container.dll")]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-    private static partial int WcIsFirstBoot(SafeFileHandle job, out byte first);
+    private static partial int WcIsFirstBoot(JobSafeHandle job, out byte first);
 
     [LibraryImport("container.dll")]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-    private static partial int WcGetContainerServiceSessionId(SafeFileHandle job, out uint session);
+    private static partial int WcGetContainerServiceSessionId(JobSafeHandle job, out uint session);
 
     [LibraryImport("kernel32.dll")]
     private static partial uint WaitForSingleObject(SafeProcessHandle handle, uint milliseconds);

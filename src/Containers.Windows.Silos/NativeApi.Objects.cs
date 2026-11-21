@@ -1,3 +1,5 @@
+using Windows.Win32.Security;
+using Windows.Wdk.Foundation;
 using Windows.Win32.Foundation;
 using Containers.Windows.Silos.DescriptionModel;
 using static Containers.Windows.Silos.NativeProviderConstants;
@@ -12,17 +14,18 @@ internal sealed unsafe partial class NativeApi
 
     private static bool ObjectMissing(int status) => status == NTSTATUS.STATUS_OBJECT_NAME_NOT_FOUND.Value || status == NTSTATUS.STATUS_OBJECT_PATH_NOT_FOUND.Value;
 
-    public void SetupObjects(nint job, ObjectNamespaceConfiguration configuration)
+    public void SetupObjects(JobSafeHandle job, ObjectNamespaceConfiguration configuration)
     {
         var flags = configuration.ShadowRoot ? SiloRootShadowRoot : 0u;
         var global = configuration.Directories.FirstOrDefault(d => d.Name.Equals("Global??", StringComparison.OrdinalIgnoreCase));
         if (global is not null)
             flags |= global.Shadow == DirectoryShadow.None ? SiloRootInitializeRoot : SiloRootInitializeRoot | SiloRootShadowGlobal;
 
-        var rootInfo = new SiloObjectRootDirectory { ControlFlags = flags };
+        var rootInfo = new SiloObjectRootDirectory();
+        rootInfo.ControlFlags = flags;
         SetJob(job, NativeJobConstants.JobObjectSiloRootDirectory, rootInfo.AsBytes());
 
-        var root = OpenDirectory(GetObjectRoot(job), DirectoryAllAccess, required: true, attributes: (uint)OBJECT_ATTRIBUTE_FLAGS.OBJ_CASE_INSENSITIVE);
+        var root = OpenDirectory(GetObjectRoot(job), DirectoryAllAccess, required: true, attributes: OBJECT_ATTRIBUTE_FLAGS.OBJ_CASE_INSENSITIVE);
         try
         {
             foreach (var directory in configuration.Directories)
@@ -58,8 +61,8 @@ internal sealed unsafe partial class NativeApi
                 fixed (char* name = configuration.Name)
                 fixed (byte* descriptor = security)
                 {
-                    var unicode = new UnicodeString(name, configuration.Name.Length);
-                    var attributes = new ObjectAttributes(&unicode, parent, (uint)(OBJECT_ATTRIBUTE_FLAGS.OBJ_PERMANENT | OBJECT_ATTRIBUTE_FLAGS.OBJ_CASE_INSENSITIVE | OBJECT_ATTRIBUTE_FLAGS.OBJ_OPENIF), (nint)descriptor);
+                    var unicode = NativeBuffer.UnicodeString(name, configuration.Name.Length);
+                    var attributes = NativeBuffer.ObjectAttributes(&unicode, parent, OBJECT_ATTRIBUTE_FLAGS.OBJ_PERMANENT | OBJECT_ATTRIBUTE_FLAGS.OBJ_CASE_INSENSITIVE | OBJECT_ATTRIBUTE_FLAGS.OBJ_OPENIF, descriptor);
                     SiloException.CheckNt(_platform.CreateDirectory(out directory, DirectoryAllAccess, &attributes, shadow, 0), "NtCreateDirectoryObjectEx");
                 }
             }
@@ -108,9 +111,9 @@ internal sealed unsafe partial class NativeApi
         fixed (char* n = configuration.Name, t = target)
         fixed (byte* descriptor = security)
         {
-            var name = new UnicodeString(n, configuration.Name.Length);
-            var destination = new UnicodeString(t, target.Length);
-            var attributes = new ObjectAttributes(&name, parent, (uint)(OBJECT_ATTRIBUTE_FLAGS.OBJ_PERMANENT | OBJECT_ATTRIBUTE_FLAGS.OBJ_CASE_INSENSITIVE), (nint)descriptor);
+            var name = NativeBuffer.UnicodeString(n, configuration.Name.Length);
+            var destination = NativeBuffer.UnicodeString(t, target.Length);
+            var attributes = NativeBuffer.ObjectAttributes(&name, parent, OBJECT_ATTRIBUTE_FLAGS.OBJ_PERMANENT | OBJECT_ATTRIBUTE_FLAGS.OBJ_CASE_INSENSITIVE, descriptor);
             nint link = 0;
             try
             {
@@ -137,12 +140,12 @@ internal sealed unsafe partial class NativeApi
         }
     }
 
-    private nint OpenDirectory(string path, uint access, bool required, uint attributes)
+    private nint OpenDirectory(string path, uint access, bool required, OBJECT_ATTRIBUTE_FLAGS attributes)
     {
         fixed (char* p = path)
         {
-            var name = new UnicodeString(p, path.Length);
-            var objectAttributes = new ObjectAttributes(&name, attributes: attributes);
+            var name = NativeBuffer.UnicodeString(p, path.Length);
+            var objectAttributes = NativeBuffer.ObjectAttributes(&name, attributes: attributes);
             var status = _platform.OpenDirectory(out var directory, access, &objectAttributes);
             if (status < 0)
                 Close(directory);
@@ -157,7 +160,7 @@ internal sealed unsafe partial class NativeApi
 
     private byte[]? ReadDirectorySecurity(string path, bool required)
     {
-        var directory = OpenDirectory(path, ReadSecurityAccess | Wdk.DIRECTORY_QUERY, required, (uint)OBJECT_ATTRIBUTE_FLAGS.OBJ_CASE_INSENSITIVE);
+        var directory = OpenDirectory(path, ReadSecurityAccess | Wdk.DIRECTORY_QUERY, required, OBJECT_ATTRIBUTE_FLAGS.OBJ_CASE_INSENSITIVE);
         if (directory == 0)
             return null;
 
@@ -178,13 +181,8 @@ internal sealed unsafe partial class NativeApi
         {
             SiloException.CheckNt(status, "QuerySecurityObjectSize");
             SiloEventSource.Log.UnexpectedSecuritySizeStatus(status);
-            var error = new InvalidDataException($"The security size query unexpectedly returned NTSTATUS 0x{status:x8}.")
-            {
-                Data =
-                {
-                    ["NtStatus"] = status,
-                },
-            };
+            var error = new InvalidDataException($"The security size query unexpectedly returned NTSTATUS 0x{status:x8}.");
+            error.Data["NtStatus"] = status;
             throw error;
         }
 
@@ -199,8 +197,8 @@ internal sealed unsafe partial class NativeApi
     {
         fixed (char* p = path)
         {
-            var name = new UnicodeString(p, path.Length);
-            var attributes = new ObjectAttributes(&name);
+            var name = NativeBuffer.UnicodeString(p, path.Length);
+            var attributes = NativeBuffer.ObjectAttributes(&name);
             var openStatus = _platform.OpenObjectLink(out var link, Wdk.SYMBOLIC_LINK_QUERY, &attributes);
             try
             {
@@ -213,7 +211,9 @@ internal sealed unsafe partial class NativeApi
                     buffer.Span.Clear();
                     fixed (char* b = buffer.Span)
                     {
-                        var target = new UnicodeString { Buffer = b, MaximumLength = (ushort)size };
+                        var target = new UNICODE_STRING();
+                        target.Buffer = b;
+                        target.MaximumLength = (ushort)size;
                         var required = size;
                         var status = _platform.QueryObjectLink(link, &target, &required);
                         if (status == BufferTooSmall)
@@ -242,25 +242,34 @@ internal sealed unsafe partial class NativeApi
 
     internal partial class PlatformProvider
     {
-        internal virtual int OpenDirectory(out nint handle, uint access, ObjectAttributes* attributes)
-            => NativeMethods.NtOpenDirectoryObject(out handle, access, attributes);
+        internal virtual int OpenDirectory(out nint handle, uint access, OBJECT_ATTRIBUTES* attributes)
+        {
+            fixed (nint* output = &handle)
+                return Wdk.NtOpenDirectoryObject((HANDLE*)output, access, attributes);
+        }
 
-        internal virtual int CreateDirectory(out nint handle, uint access, ObjectAttributes* attributes, nint shadow, uint flags)
+        internal virtual int CreateDirectory(out nint handle, uint access, OBJECT_ATTRIBUTES* attributes, nint shadow, uint flags)
             => NativeMethods.NtCreateDirectoryObjectEx(out handle, access, attributes, shadow, flags);
 
-        internal virtual int OpenObjectLink(out nint handle, uint access, ObjectAttributes* attributes)
-            => NativeMethods.NtOpenSymbolicLinkObject(out handle, access, attributes);
+        internal virtual int OpenObjectLink(out nint handle, uint access, OBJECT_ATTRIBUTES* attributes)
+        {
+            fixed (nint* output = &handle)
+                return Wdk.NtOpenSymbolicLinkObject((HANDLE*)output, access, attributes);
+        }
 
-        internal virtual int QueryObjectLink(nint handle, UnicodeString* target, uint* length)
-            => NativeMethods.NtQuerySymbolicLinkObject(handle, target, length);
+        internal virtual int QueryObjectLink(nint handle, UNICODE_STRING* target, uint* length)
+            => Wdk.NtQuerySymbolicLinkObject((HANDLE)handle, target, length);
 
-        internal virtual int CreateObjectLink(nint* handle, uint access, ObjectAttributes* attributes, UnicodeString* target)
+        internal virtual int CreateObjectLink(nint* handle, uint access, OBJECT_ATTRIBUTES* attributes, UNICODE_STRING* target)
             => NativeMethods.NtCreateSymbolicLinkObject(handle, access, attributes, target);
 
         internal virtual int SetObjectLink(nint handle, int informationClass, void* data, uint size)
             => NativeMethods.NtSetInformationSymbolicLink(handle, informationClass, data, size);
 
         internal virtual int QuerySecurity(nint handle, uint information, void* data, uint size, out uint needed)
-            => NativeMethods.NtQuerySecurityObject(handle, information, data, size, out needed);
+        {
+            fixed (uint* returned = &needed)
+                return Wdk.NtQuerySecurityObject((HANDLE)handle, information, new PSECURITY_DESCRIPTOR(data), size, returned);
+        }
     }
 }

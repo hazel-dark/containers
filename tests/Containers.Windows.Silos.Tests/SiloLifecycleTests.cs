@@ -88,7 +88,8 @@ public sealed class SiloLifecycleTests
     [Fact]
     public void BootFailurePreservesThePrimaryErrorAndMakesNoExtraNativeJobWrite()
     {
-        var api = new RecordingApi { FailAt = "boot" };
+        var api = new RecordingApi();
+        api.FailAt = "boot";
         using var silo = WindowsSilo.Create(AllProviders, true, api);
         using var deleteEvent = new SafeWaitHandle(0x3456, ownsHandle: false);
         var error = Assert.Throws<InjectedFailure>(() => silo.BootServer(deleteEvent));
@@ -126,13 +127,14 @@ public sealed class SiloLifecycleTests
     [Fact]
     public void CreateIdentityFailurePrecedesJobWritesAndReleasesOwnership()
     {
-        var api = new RecordingApi { FailAt = "set:15" };
+        var api = new RecordingApi();
+        api.FailAt = "set:15";
         api.IdStatuses.Enqueue(AccessDenied);
         Assert.Equal(AccessDenied, Assert.Throws<SiloException>(() => WindowsSilo.Create(AllProviders, true, api)).NtStatus);
         Assert.Equal(["create", "id", "close"], api.Calls);
         Assert.Empty(api.JobWrites);
 
-        using var job = new CountingHandle(0x1234);
+        using var job = new RecordingJobHandle(0x1234);
         api.Calls.Clear();
         api.IdJobs.Clear();
         api.IdStatuses.Enqueue(AccessDenied);
@@ -172,7 +174,8 @@ public sealed class SiloLifecycleTests
     [Fact]
     public void ExplicitCleanupStopsAtFailureAndCanBeRetried()
     {
-        var api = new RecordingApi { FailAt = "cleanup-registry" };
+        var api = new RecordingApi();
+        api.FailAt = "cleanup-registry";
         using var silo = WindowsSilo.Create(AllProviders, true, api);
         Assert.Throws<InjectedFailure>(silo.Cleanup);
         Assert.Equal(["cleanup-network", "cleanup-registry"], api.Calls.TakeLast(2));
@@ -246,7 +249,8 @@ public sealed class SiloLifecycleTests
     [InlineData("validate-image", "validate-image,cleanup-network,cleanup-registry,rollback-files,close")]
     public void FailedCreateUnwindsArmedProvidersInReverseSetupOrder(string failAt, string expectedTail)
     {
-        var api = new RecordingApi { FailAt = failAt };
+        var api = new RecordingApi();
+        api.FailAt = failAt;
         var error = Assert.Throws<InjectedFailure>(() => WindowsSilo.Create(AllProviders, true, api));
         var expected = expectedTail.Split(',');
         Assert.Equal(expected, api.Calls.TakeLast(expected.Length));
@@ -262,7 +266,8 @@ public sealed class SiloLifecycleTests
     [InlineData(true, "test", "mounts")]
     public void CreateArmsNetworkRollbackByPresenceAfterSetupOrSkip(bool server, string? network, string failAt)
     {
-        var api = new RecordingApi { FailAt = failAt };
+        var api = new RecordingApi();
+        api.FailAt = failAt;
         Assert.Throws<InjectedFailure>(() => WindowsSilo.Create(AllProviders with { NetworkCompartment = network }, server, api));
         Assert.Equal(!string.IsNullOrEmpty(network), api.Calls.Contains("network"));
         string[] unwind = network is null
@@ -274,7 +279,8 @@ public sealed class SiloLifecycleTests
     [Fact]
     public void RollbackFailureIsAttachedToTheOriginalFailure()
     {
-        var api = new RecordingApi { FailAt = "validate-image", AlsoFailAt = "cleanup-registry" };
+        var api = new RecordingApi { AlsoFailAt = "cleanup-registry" };
+        api.FailAt = "validate-image";
         var error = Assert.Throws<InjectedFailure>(() => WindowsSilo.Create(AllProviders, true, api));
         Assert.Equal("validate-image", error.Message);
         Assert.IsType<AggregateException>(error.Data["SiloCleanupFailure"]);
@@ -287,7 +293,7 @@ public sealed class SiloLifecycleTests
     public void DisposeWithoutProviderCleanupReleasesOnlyTheJobReference(bool borrowed)
     {
         var api = new RecordingApi();
-        using var caller = new CountingHandle(0x1234);
+        using var caller = new RecordingJobHandle(0x1234);
         using var silo = borrowed
             ? WindowsSilo.ConfigureJob(caller, new SiloDescription(), false, api)
             : WindowsSilo.Create(new SiloDescription(), false, api);
@@ -305,10 +311,26 @@ public sealed class SiloLifecycleTests
     }
 
     [Fact]
+    public void ControllerRetainsTheOriginalHandleThroughATypedBorrow()
+    {
+        using var external = new SafeFileHandle(0x1234, ownsHandle: false);
+        using var job = JobSafeHandle.Borrow(external);
+        using var silo = WindowsSilo.ConfigureJob(job, new SiloDescription(), false, new RecordingApi());
+
+        external.Dispose();
+        job.Dispose();
+        Assert.False(external.IsClosed);
+        _ = silo.Identifier;
+
+        silo.Dispose();
+        Assert.True(external.IsClosed);
+    }
+
+    [Fact]
     public void BorrowedJobIsKeptAliveWithoutTransferringOwnership()
     {
         var api = new RecordingApi();
-        using var caller = new CountingHandle(0x1234);
+        using var caller = new RecordingJobHandle(0x1234);
         using var silo = WindowsSilo.ConfigureJob(caller, new SiloDescription(), false, api);
         caller.Dispose();
         Assert.Equal(0, caller.Closes);
@@ -322,8 +344,9 @@ public sealed class SiloLifecycleTests
     [Fact]
     public void FailedCreateReleasesTheBorrowedReferenceOnly()
     {
-        var api = new RecordingApi { FailAt = "register" };
-        using var job = new CountingHandle(0x1234);
+        var api = new RecordingApi();
+        api.FailAt = "register";
+        using var job = new RecordingJobHandle(0x1234);
         Assert.Throws<InjectedFailure>(() => WindowsSilo.ConfigureJob(job, new SiloDescription(), true, api));
         Assert.Equal(0, job.Closes);
         Assert.DoesNotContain("close", api.Calls);
@@ -391,7 +414,7 @@ public sealed class SiloLifecycleTests
                 Assert.True(resume.Wait(TimeSpan.FromSeconds(10)));
             }
         };
-        using var caller = new CountingHandle(0x1234);
+        using var caller = new RecordingJobHandle(0x1234);
         using var silo = WindowsSilo.ConfigureJob(caller, new SiloDescription(), false, api);
         using var deleteEvent = new SafeWaitHandle(0x3456, ownsHandle: false);
         var boot = Task.Run(() => silo.BootServer(deleteEvent));
@@ -406,19 +429,6 @@ public sealed class SiloLifecycleTests
         Assert.All(api.IdJobs, job => Assert.Equal(0x1234, job));
         silo.Dispose();
         Assert.Equal(1, caller.Closes);
-    }
-
-    private sealed class CountingHandle : SafeHandleZeroOrMinusOneIsInvalid
-    {
-        internal int Closes { get; private set; }
-
-        internal CountingHandle(nint handle) : base(true) => SetHandle(handle);
-
-        protected override bool ReleaseHandle()
-        {
-            Closes++;
-            return true;
-        }
     }
 
     private sealed class InjectedFailure(string operation) : Exception(operation);
@@ -444,18 +454,22 @@ public sealed class SiloLifecycleTests
                 throw new InjectedFailure(operation);
         }
 
-        public nint CreateJob() { Record("create"); return CreatedJob; }
-        public void Close(nint handle) => Record("close");
-        public int SetJob(nint job, int informationClass, Span<byte> data)
+        public JobSafeHandle CreateJob()
+        {
+            Record("create");
+            return new RecordingJobHandle(CreatedJob, _ => Record("close"));
+        }
+
+        public int SetJob(JobSafeHandle job, int informationClass, Span<byte> data)
         {
             Record($"set:{informationClass}");
-            JobWrites.Add((job, informationClass, data.ToArray()));
+            JobWrites.Add((job.DangerousGetHandle(), informationClass, data.ToArray()));
             var status = informationClass == 0x29 ? ShutdownStatus : 0;
             SiloException.CheckNt(status, "SetJob");
             return status;
         }
 
-        public virtual int QueryJob(nint job, int informationClass, Span<byte> data)
+        public virtual int QueryJob(JobSafeHandle job, int informationClass, Span<byte> data)
         {
             Assert.Equal(3, informationClass);
             Assert.Equal("00000000010000000000000000000000", Convert.ToHexString(data));
@@ -464,44 +478,56 @@ public sealed class SiloLifecycleTests
             return QueryStatus;
         }
 
-        public void RegisterServer(nint job) => Record("register");
-        public void SetSystemRoot(nint job, string root) => Record("system-root");
-        public void AssignProcess(nint job, nint process) => Record($"assign:{process}");
-        public void Boot(nint job)
+        public void RegisterServer(JobSafeHandle job) => Record("register");
+        public void SetSystemRoot(JobSafeHandle job, string root) => Record("system-root");
+        public void AssignProcess(JobSafeHandle job, nint process) => Record($"assign:{process}");
+        public void Boot(JobSafeHandle job)
         {
             Record("boot");
             DuringBoot?.Invoke();
         }
-        public void SetupObjects(nint job, ObjectNamespaceConfiguration configuration) => Record("objects");
-        public IFileSystemRegistration CreateFileSystemRegistration(nint job) => this;
+        public void SetupObjects(JobSafeHandle job, ObjectNamespaceConfiguration configuration) => Record("objects");
+        public IFileSystemRegistration CreateFileSystemRegistration(JobSafeHandle job) => this;
         public void Setup(FileSystemConfiguration configuration) => Record("files");
         public void Rollback() => Record("rollback-files");
-        public void CleanupFileSystem(nint job, string? volumePath) => Record(volumePath is null ? "cleanup-files" : $"cleanup-files:{volumePath}");
-        public void SetupRegistry(nint job, RegistryConfiguration configuration) => Record("registry");
-        public void SetupNetwork(nint job, string name) => Record("network");
-        public void SetupMounts(nint job, IReadOnlyList<DriveMapping> mounts) => Record("mounts");
-        public void SetupPipes(nint job, IReadOnlyList<PipeMapping> pipes) => Record("pipes");
-        public void CleanupNetwork(nint job) => Record("cleanup-network");
-        public void CleanupRegistry(nint job) => Record("cleanup-registry");
+        public void CleanupFileSystem(JobSafeHandle job, string? volumePath) => Record(volumePath is null ? "cleanup-files" : $"cleanup-files:{volumePath}");
+        public void SetupRegistry(JobSafeHandle job, RegistryConfiguration configuration) => Record("registry");
+        public void SetupNetwork(JobSafeHandle job, string name) => Record("network");
+        public void SetupMounts(JobSafeHandle job, IReadOnlyList<DriveMapping> mounts) => Record("mounts");
+        public void SetupPipes(JobSafeHandle job, IReadOnlyList<PipeMapping> pipes) => Record("pipes");
+        public void CleanupNetwork(JobSafeHandle job) => Record("cleanup-network");
+        public void CleanupRegistry(JobSafeHandle job) => Record("cleanup-registry");
 #if SILO2025
-        public virtual uint ValidateBootImage(nint job) => 26100;
+        public virtual uint ValidateBootImage(JobSafeHandle job) => 26100;
 #endif
-        public void ConfigureServerImage(nint job, DownlevelConfiguration? configuration) => Record("validate-image");
-        public Guid GetId(nint job)
+        public void ConfigureServerImage(JobSafeHandle job, DownlevelConfiguration? configuration) => Record("validate-image");
+        public Guid GetId(JobSafeHandle job)
         {
-            IdJobs.Add(job);
+            IdJobs.Add(job.DangerousGetHandle());
             Record("id");
             if (IdStatuses.TryDequeue(out var status))
                 SiloException.CheckNt(status, "QueryContainerId");
             return Guid.Empty;
         }
-        public string GetObjectRoot(nint job) => throw new NotSupportedException();
-        public string GetRegistryRoot(nint job) => throw new NotSupportedException();
-        public nint GetRegistryHandle(nint job, uint type) => throw new NotSupportedException();
-        public nint Launch(nint job, string command, uint flags) => throw new NotSupportedException();
-        public void ModifyRegistryFlags(nint job, uint add, uint remove) => throw new NotSupportedException();
-        public void AddRuntimeVirtualKeys(nint job, IReadOnlyList<RuntimeVirtualKey> keys) => throw new NotSupportedException();
-        public void Terminate(nint job, int status) => throw new NotSupportedException();
-        public SiloTerminationNotification RegisterForTerminationNotification(nint job) => throw new NotSupportedException();
+        public string GetObjectRoot(JobSafeHandle job) => throw new NotSupportedException();
+        public string GetRegistryRoot(JobSafeHandle job) => throw new NotSupportedException();
+        public nint GetRegistryHandle(JobSafeHandle job, uint type) => throw new NotSupportedException();
+        public nint Launch(JobSafeHandle job, string command, uint flags) => throw new NotSupportedException();
+        public void ModifyRegistryFlags(JobSafeHandle job, uint add, uint remove) => throw new NotSupportedException();
+        public void AddRuntimeVirtualKeys(JobSafeHandle job, IReadOnlyList<RuntimeVirtualKey> keys) => throw new NotSupportedException();
+        public void Terminate(JobSafeHandle job, int status) => throw new NotSupportedException();
+        public SiloTerminationNotification RegisterForTerminationNotification(JobSafeHandle job) => throw new NotSupportedException();
+    }
+}
+
+internal sealed class RecordingJobHandle(nint value, Action<nint>? release = null) : JobSafeHandle(value, ownsHandle: true)
+{
+    internal int Closes { get; private set; }
+
+    protected override bool ReleaseHandle()
+    {
+        Closes++;
+        release?.Invoke(handle);
+        return true;
     }
 }

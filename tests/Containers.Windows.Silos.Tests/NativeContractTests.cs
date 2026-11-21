@@ -1,3 +1,6 @@
+using Windows.Win32.System.IO;
+using Windows.Win32.Foundation;
+using Windows.Wdk.Foundation;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -9,17 +12,17 @@ namespace Containers.Windows.Silos.Tests;
 
 public sealed class NativeContractTests
 {
-    private static readonly nint RegistryJob = unchecked((nint)0xFEDCBA9876543210UL);
+    private static readonly JobSafeHandle RegistryJob = new JobSafeHandle(unchecked((nint)0xFEDCBA9876543210UL), ownsHandle: false);
 
     [Fact]
     public unsafe void X64LayoutsMatchRetainedCallSites()
     {
-        Assert.Equal(0x10, Unsafe.SizeOf<UnicodeString>());
-        Assert.Equal(0x08, Marshal.OffsetOf<UnicodeString>(nameof(UnicodeString.Buffer)));
-        Assert.Equal(0x30, Unsafe.SizeOf<ObjectAttributes>());
-        Assert.Equal(0x20, Marshal.OffsetOf<ObjectAttributes>(nameof(ObjectAttributes.SecurityDescriptor)));
+        Assert.Equal(0x10, Unsafe.SizeOf<UNICODE_STRING>());
+        Assert.Equal(0x08, Marshal.OffsetOf<UNICODE_STRING>(nameof(UNICODE_STRING.Buffer)));
+        Assert.Equal(0x30, Unsafe.SizeOf<OBJECT_ATTRIBUTES>());
+        Assert.Equal(0x20, Marshal.OffsetOf<OBJECT_ATTRIBUTES>(nameof(OBJECT_ATTRIBUTES.SecurityDescriptor)));
         Assert.Equal(0x20, Unsafe.SizeOf<RelativeNtName>());
-        Assert.Equal(0x10, Unsafe.SizeOf<IoStatusBlock>());
+        Assert.Equal(0x10, Unsafe.SizeOf<IO_STATUS_BLOCK>());
         Assert.Equal(0x98, Unsafe.SizeOf<ExtendedLimitInformationV2>());
         Assert.Equal(0x90, Marshal.OffsetOf<ExtendedLimitInformationV2>(nameof(ExtendedLimitInformationV2.JobTotalMemoryLimit)));
         Assert.Equal(0x10, Unsafe.SizeOf<SiloObjectRootDirectory>());

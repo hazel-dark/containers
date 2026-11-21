@@ -47,7 +47,8 @@ public sealed class TerminationNotificationTests
     [Fact]
     public void RegistrationIdentityFailurePrecedesTheDuplicateAndAnyWrite()
     {
-        var api = new RecordingNotifications { IdentityStatus = AccessDenied };
+        var api = new RecordingNotifications();
+        api.IdentityStatus = AccessDenied;
         Assert.Equal(AccessDenied, Assert.Throws<SiloException>(() => api.Register(Job)).NtStatus);
         Assert.Equal(["id"], api.Calls);
     }
@@ -308,7 +309,11 @@ public sealed class TerminationNotificationTests
         internal int IdentityStatus { get; set; }
         internal bool Server { get; init; } = true;
 
-        internal SiloTerminationNotification Register(nint job) => new SiloTerminationNotification(job, this, registrations);
+        internal SiloTerminationNotification Register(nint job)
+        {
+            using var handle = new JobSafeHandle(job, ownsHandle: false);
+            return new SiloTerminationNotification(handle, this, registrations);
+        }
         internal nint AttachedTo(nint job) => ports[ObjectFor(job)];
 
         private nint ObjectFor(nint job) => job switch
@@ -325,28 +330,28 @@ public sealed class TerminationNotificationTests
                 SiloException.CheckNt(AccessDenied, call);
         }
 
-        public Guid GetId(nint job)
+        public Guid GetId(JobSafeHandle job)
         {
-            Queries.Enqueue(job);
+            Queries.Enqueue(job.DangerousGetHandle());
             Record("id");
-            DuringIdentity?.Invoke(job);
+            DuringIdentity?.Invoke(job.DangerousGetHandle());
             SiloException.CheckNt(IdentityStatus, "QueryContainerId");
             return Guid.Empty;
         }
 
-        public bool CompareJobs(nint first, nint second) => ObjectFor(first) == ObjectFor(second);
+        public bool CompareJobs(JobSafeHandle first, JobSafeHandle second) => ObjectFor(first.DangerousGetHandle()) == ObjectFor(second.DangerousGetHandle());
 
-        public nint DuplicateJob(nint job)
+        public JobSafeHandle DuplicateJob(JobSafeHandle job)
         {
             Record("duplicate");
             nint duplicate = Interlocked.Increment(ref nextDuplicate);
-            Assert.True(duplicates.TryAdd(duplicate, ObjectFor(job)));
-            return duplicate;
+            Assert.True(duplicates.TryAdd(duplicate, ObjectFor(job.DangerousGetHandle())));
+            return new RecordingJobHandle(duplicate, Close);
         }
 
-        public int SetJob(nint job, int informationClass, Span<byte> data)
+        public int SetJob(JobSafeHandle job, int informationClass, Span<byte> data)
         {
-            Assert.True(duplicates.ContainsKey(job));
+            Assert.True(duplicates.ContainsKey(job.DangerousGetHandle()));
             if (informationClass == 0x10)
                 Assert.Equal("10200000", Convert.ToHexString(data));
             else
@@ -356,11 +361,11 @@ public sealed class TerminationNotificationTests
             }
             Record($"set:{informationClass}");
             if (informationClass == 7)
-                ports.TryRemove(ObjectFor(job), out _);
+                ports.TryRemove(ObjectFor(job.DangerousGetHandle()), out _);
             return 0;
         }
 
-        public int AllocateJobNotification(out nint notification, nint job, delegate* unmanaged<nint, nint, nint, nuint, nint, int, void> callback, nint context, nint environment)
+        public int AllocateJobNotification(out nint notification, JobSafeHandle job, delegate* unmanaged<nint, nint, nint, nuint, nint, int, void> callback, nint context, nint environment)
         {
             Assert.Equal(0, environment);
             Record("allocate");
@@ -370,9 +375,9 @@ public sealed class TerminationNotificationTests
             if (status >= 0)
             {
                 var result = (nint)Interlocked.Increment(ref nextNotification);
-                if (!ports.TryAdd(ObjectFor(job), result))
+                if (!ports.TryAdd(ObjectFor(job.DangerousGetHandle()), result))
                     return InvalidParameter;
-                Assert.True(notifications.TryAdd(result, new Packet(job, callback, context)));
+                Assert.True(notifications.TryAdd(result, new Packet(job.DangerousGetHandle(), callback, context)));
                 notification = result;
             }
             return status;
@@ -403,15 +408,15 @@ public sealed class TerminationNotificationTests
             }
         }
 
-        public bool IsServer(nint job)
+        public bool IsServer(JobSafeHandle job)
         {
-            Assert.True(duplicates.ContainsKey(job));
+            Assert.True(duplicates.ContainsKey(job.DangerousGetHandle()));
             Record("mode");
             SiloException.CheckNt(ModeStatus, "Query server mode");
             return Server;
         }
 
-        public void Close(nint handle)
+        private void Close(nint handle)
         {
             Assert.True(duplicates.TryRemove(handle, out _));
             Record("close");

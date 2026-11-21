@@ -6,7 +6,7 @@ namespace Containers.Windows.Silos;
 
 public partial class WindowsSilo
 {
-    private void SetServerInitialize(nint jobHandle, nint deleteEvent)
+    private void SetServerInitialize(JobSafeHandle jobHandle, nint deleteEvent)
     {
         var imageBuild = _api.ValidateBootImage(jobHandle);
         var initialize = new ServerSiloInitialize2025 { DeleteEvent = deleteEvent, ImageBuild = imageBuild };

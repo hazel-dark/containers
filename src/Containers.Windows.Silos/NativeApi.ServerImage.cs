@@ -33,7 +33,7 @@ internal sealed unsafe partial class NativeApi
 
     internal delegate int RegistryRead(nint key, string subkey, string value, uint flags, void* data, uint* size);
 
-    private ImageVersion ReadSiloVersion(nint job)
+    private ImageVersion ReadSiloVersion(JobSafeHandle job)
     {
         var software = GetRegistryHandle(job, NativeProviderConstants.WcVRegSoftwareRoot);
         ImageVersion image;
@@ -78,13 +78,15 @@ internal sealed unsafe partial class NativeApi
         }
     }
 
-    private static RegistryQueryEntry QueryDword(char* name, uint* result) => new RegistryQueryEntry
+    private static RegistryQueryEntry QueryDword(char* name, uint* result)
     {
-        Flags = Wdk.RTL_QUERY_REGISTRY_DIRECT | Wdk.RTL_QUERY_REGISTRY_TYPECHECK,
-        Name = name,
-        EntryContext = result,
-        DefaultType = (uint)REG_VALUE_TYPE.REG_DWORD << (int)Wdk.RTL_QUERY_REGISTRY_TYPECHECK_SHIFT,
-    };
+        var dword = new RegistryQueryEntry();
+        dword.Flags = Wdk.RTL_QUERY_REGISTRY_DIRECT | Wdk.RTL_QUERY_REGISTRY_TYPECHECK;
+        dword.Name = name;
+        dword.EntryContext = result;
+        dword.DefaultType = (uint)REG_VALUE_TYPE.REG_DWORD << (int)Wdk.RTL_QUERY_REGISTRY_TYPECHECK_SHIFT;
+        return dword;
+    }
 
     internal static ImageVersion ReadImageVersion(nint software, nint system, RegistryRead read)
     {
@@ -150,7 +152,7 @@ internal sealed unsafe partial class NativeApi
             return (int)PInvoke.RegGetValue(new HKEY(key), s, v, (REG_ROUTINE_FLAGS)flags, null, data, size);
     }
 
-    internal void InjectHostFiles(nint job, DownlevelConfiguration configuration)
+    internal void InjectHostFiles(JobSafeHandle job, DownlevelConfiguration configuration)
     {
         if (configuration.HostFiles.Count == 0 || SkipHostFileInjection())
             return;
@@ -202,7 +204,7 @@ internal sealed unsafe partial class NativeApi
 
         internal virtual int AttachHostFileFilter(string volume) => NativeMethods.BfAttachFilter(volume, null);
 
-        internal virtual int BindHostFile(nint job, string destination, string source) =>
+        internal virtual int BindHostFile(JobSafeHandle job, string destination, string source) =>
             NativeMethods.BfSetupFilter(job, NativeProviderConstants.BindFltFlagReadOnlyMapping, destination, source, null, 0);
 
         internal virtual bool FindFixupFile(string path, FIND_FIRST_EX_FLAGS flags)
@@ -239,15 +241,13 @@ internal sealed unsafe partial class NativeApi
             try
             {
                 var useRelative = relative.Name.Length != 0;
-                var attributes = useRelative ? new ObjectAttributes(&relative.Name, relative.ContainingDirectory) : new ObjectAttributes(&name);
-                nint file = 0;
-
-                try
+                var attributes = useRelative ? NativeBuffer.ObjectAttributes(&relative.Name, relative.ContainingDirectory) : NativeBuffer.ObjectAttributes(&name);
+                const FILE_ACCESS_RIGHTS access = FILE_ACCESS_RIGHTS.SYNCHRONIZE | FILE_ACCESS_RIGHTS.FILE_READ_EA;
+                const FILE_SHARE_MODE share = FILE_SHARE_MODE.FILE_SHARE_READ | FILE_SHARE_MODE.FILE_SHARE_WRITE | FILE_SHARE_MODE.FILE_SHARE_DELETE;
+                const NTCREATEFILE_CREATE_OPTIONS options = NTCREATEFILE_CREATE_OPTIONS.FILE_SYNCHRONOUS_IO_NONALERT | NTCREATEFILE_CREATE_OPTIONS.FILE_NON_DIRECTORY_FILE | NTCREATEFILE_CREATE_OPTIONS.FILE_OPEN_FOR_BACKUP_INTENT;
+                var status = Wdk.NtCreateFile(out var file, access, in attributes, out _, null, FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_NORMAL, share, NTCREATEFILE_CREATE_DISPOSITION.FILE_OPEN, options);
+                using (file)
                 {
-                    const FILE_ACCESS_RIGHTS access = FILE_ACCESS_RIGHTS.SYNCHRONIZE | FILE_ACCESS_RIGHTS.FILE_READ_EA;
-                    const FILE_SHARE_MODE share = FILE_SHARE_MODE.FILE_SHARE_READ | FILE_SHARE_MODE.FILE_SHARE_WRITE | FILE_SHARE_MODE.FILE_SHARE_DELETE;
-                    const NTCREATEFILE_CREATE_OPTIONS options = NTCREATEFILE_CREATE_OPTIONS.FILE_SYNCHRONOUS_IO_NONALERT | NTCREATEFILE_CREATE_OPTIONS.FILE_NON_DIRECTORY_FILE | NTCREATEFILE_CREATE_OPTIONS.FILE_OPEN_FOR_BACKUP_INTENT;
-                    var status = NativeMethods.NtCreateFile(out file, (uint)access, &attributes, out _, null, (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_NORMAL, (uint)share, (uint)NTCREATEFILE_CREATE_DISPOSITION.FILE_OPEN, (uint)options, null, 0);
                     SiloException.CheckNt(status, "Open catalog hint file");
 
                     Span<byte> query = stackalloc byte[24];
@@ -259,29 +259,20 @@ internal sealed unsafe partial class NativeApi
                     Span<byte> ea = stackalloc byte[288];
                     ea.Clear();
 
-                    fixed (byte* q = query, e = ea)
+                    status = Wdk.NtQueryEaFile(file, out var io, ea, true, query, null, true);
+                    if (status == NTSTATUS.STATUS_PENDING)
                     {
-                        IoStatusBlock io = default;
-                        status = NativeMethods.NtQueryEaFile(file, &io, e, (uint)ea.Length, singleEntry: 1, q, (uint)query.Length, null, restart: 1);
-                        if (status == NTSTATUS.STATUS_PENDING.Value)
-                        {
-                            SiloException.CheckNt(NativeMethods.NtWaitForSingleObject(file, alertable: 0, timeout: null), "Wait for catalog hint EA");
-                            status = (int)io.Status;
-                        }
-
-                        SiloException.CheckNt(status, "Read catalog hint EA");
-                        return DecodeCatalogHint(ea);
+                        SiloException.CheckNt(Wdk.NtWaitForSingleObject((HANDLE)file.DangerousGetHandle(), false, null), "Wait for catalog hint EA");
+                        status = io.Status;
                     }
-                }
-                finally
-                {
-                    if (file != 0 && file != -1)
-                        Close(file);
+
+                    SiloException.CheckNt(status, "Read catalog hint EA");
+                    return DecodeCatalogHint(ea);
                 }
             }
             finally
             {
-                NativeMethods.RtlFreeUnicodeString(&name);
+                PInvoke.RtlFreeUnicodeString(ref name);
                 NativeMethods.RtlReleaseRelativeName(&relative);
             }
         }

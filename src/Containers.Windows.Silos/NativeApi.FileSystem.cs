@@ -9,9 +9,9 @@ namespace Containers.Windows.Silos;
 
 internal sealed unsafe partial class NativeApi
 {
-    public IFileSystemRegistration CreateFileSystemRegistration(nint job) => new FileSystemRegistration(this, job);
+    public IFileSystemRegistration CreateFileSystemRegistration(JobSafeHandle job) => new FileSystemRegistration(this, job);
 
-    public void CleanupFileSystem(nint job, string? volumePath)
+    public void CleanupFileSystem(JobSafeHandle job, string? volumePath)
     {
         if (string.IsNullOrEmpty(volumePath))
             return;
@@ -27,9 +27,9 @@ internal sealed unsafe partial class NativeApi
         private readonly List<string> _installedBindings = [];
         private string? _detachPath;
         private readonly NativeApi api;
-        private readonly nint _job;
+        private readonly JobSafeHandle _job;
 
-        public FileSystemRegistration(NativeApi api, nint job)
+        public FileSystemRegistration(NativeApi api, JobSafeHandle job)
         {
             this.api = api;
             _job = job;
@@ -92,7 +92,7 @@ internal sealed unsafe partial class NativeApi
         }
     }
 
-    private static void SetupWci(nint job, WciConfiguration configuration)
+    private static void SetupWci(JobSafeHandle job, WciConfiguration configuration)
     {
         ArgumentOutOfRangeException.ThrowIfGreaterThan(configuration.IsolationMode, WcMaximumIsolationMode);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(configuration.NestingMode, WcMaximumNestingMode);
@@ -128,7 +128,7 @@ internal sealed unsafe partial class NativeApi
         return PInvoke.FilterDetach("wcifs", name, "wcifs Instance").Value;
     }
 
-    private static void SetupBindBatch(nint job, BindBatch batch, bool registerExceptions)
+    private static void SetupBindBatch(JobSafeHandle job, BindBatch batch, bool registerExceptions)
     {
         using var exceptions = new NativeStrings(batch.Exceptions);
         using var file = PInvoke.CreateFile(batch.ConfigurationPath, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_READ, FILE_SHARE_MODE.FILE_SHARE_READ, null, FILE_CREATION_DISPOSITION.OPEN_EXISTING, 0);

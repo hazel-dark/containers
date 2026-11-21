@@ -13,16 +13,14 @@ public sealed partial class WindowsSilo : IDisposable
 {
     private readonly Lock _gate = new Lock();
     private readonly ISiloApi _api;
-    private readonly SafeHandle _jobLease;
+    private readonly JobSafeHandle _jobLease;
     private IFileSystemRegistration? _fileSystemRollback;
     private bool _networkCleanupArmed;
     private bool _registry;
     private bool _hasCompletedCleanup;
     private bool _providersConfigured;
 
-    private nint JobHandle => _jobLease.DangerousGetHandle();
-
-    private WindowsSilo(ISiloApi api, SafeHandle jobLease)
+    private WindowsSilo(ISiloApi api, JobSafeHandle jobLease)
     {
         _api = api;
         _jobLease = jobLease;
@@ -39,7 +37,7 @@ public sealed partial class WindowsSilo : IDisposable
     /// <summary>Configures a caller-supplied Windows job as a silo. The controller holds a reference
     /// for its lifetime. Disposing the controller releases that reference and the caller retains
     /// ownership of the job handle.</summary>
-    public static WindowsSilo ConfigureJob(SafeHandle job, SiloDescription description, bool server = false)
+    public static WindowsSilo ConfigureJob(JobSafeHandle job, SiloDescription description, bool server = false)
     {
         RequireWindows();
         return ConfigureJob(job, description, server, NativeApi.Instance);
@@ -54,17 +52,17 @@ public sealed partial class WindowsSilo : IDisposable
     internal static WindowsSilo Create(SiloDescription description, bool server, ISiloApi api)
     {
         ArgumentNullException.ThrowIfNull(description);
-        return ConfigureCore(description, server, api, new OwnedJob(api));
+        return ConfigureCore(description, server, api, api.CreateJob());
     }
 
-    internal static WindowsSilo ConfigureJob(SafeHandle job, SiloDescription description, bool server, ISiloApi api)
+    internal static WindowsSilo ConfigureJob(JobSafeHandle job, SiloDescription description, bool server, ISiloApi api)
     {
         ArgumentNullException.ThrowIfNull(job);
         ArgumentNullException.ThrowIfNull(description);
-        return ConfigureCore(description, server, api, new BorrowedJob(job));
+        return ConfigureCore(description, server, api, JobSafeHandle.Borrow(job));
     }
 
-    private static WindowsSilo ConfigureCore(SiloDescription description, bool server, ISiloApi api, SafeHandle jobLease)
+    private static WindowsSilo ConfigureCore(SiloDescription description, bool server, ISiloApi api, JobSafeHandle jobLease)
     {
         WindowsSilo? silo = null;
         try
@@ -120,6 +118,7 @@ public sealed partial class WindowsSilo : IDisposable
         {
             if (_jobLease.IsClosed)
                 return;
+
             _hasCompletedCleanup = true;
             _jobLease.Dispose();
         }
@@ -128,7 +127,7 @@ public sealed partial class WindowsSilo : IDisposable
     private void Configure(SiloDescription description, bool server)
     {
 
-        _ = _api.GetId(JobHandle);
+        _ = _api.GetId(_jobLease);
         if (description.Job?.Cpu is { } cpu)
         {
             JOBOBJECT_CPU_RATE_CONTROL_INFORMATION rate = default;
@@ -144,7 +143,7 @@ public sealed partial class WindowsSilo : IDisposable
                 rate.Weight = cpu.Weight;
             }
 
-            _api.SetJob(JobHandle, (int)JOBOBJECTINFOCLASS.JobObjectCpuRateControlInformation, rate.AsBytes());
+            _api.SetJob(_jobLease, (int)JOBOBJECTINFOCLASS.JobObjectCpuRateControlInformation, rate.AsBytes());
         }
 
         if (description.Job?.MemoryLimit is { } limit)
@@ -152,58 +151,60 @@ public sealed partial class WindowsSilo : IDisposable
             ExtendedLimitInformationV2 memory = default;
             memory.Limits.BasicLimitInformation.LimitFlags = NativeJobConstants.WcJobTotalMemoryLimit;
             memory.JobTotalMemoryLimit = checked((nuint)limit);
-            _api.SetJob(JobHandle, (int)JOBOBJECTINFOCLASS.JobObjectExtendedLimitInformation, memory.AsBytes());
+            _api.SetJob(_jobLease, (int)JOBOBJECTINFOCLASS.JobObjectExtendedLimitInformation, memory.AsBytes());
         }
 
         ExtendedLimitInformationV2 extended = default;
         extended.Limits.BasicLimitInformation.LimitFlags = description.Job?.KillOnLastHandleClose == true
             ? JOB_OBJECT_LIMIT.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
             : NativeJobConstants.JobObjectLimitSiloReady;
-        _api.SetJob(JobHandle, (int)JOBOBJECTINFOCLASS.JobObjectExtendedLimitInformation, extended.AsBytes());
-        _api.SetJob(JobHandle, (int)JOBOBJECTINFOCLASS.JobObjectCreateSilo, []);
+
+        _api.SetJob(_jobLease, (int)JOBOBJECTINFOCLASS.JobObjectExtendedLimitInformation, extended.AsBytes());
+        _api.SetJob(_jobLease, (int)JOBOBJECTINFOCLASS.JobObjectCreateSilo, []);
 
         if (description.Job?.SystemRoot is { } root)
-            _api.SetSystemRoot(JobHandle, root);
+            _api.SetSystemRoot(_jobLease, root);
 
         if (description.Job?.EnableThreadImpersonation == true)
-            _api.SetJob(JobHandle, NativeJobConstants.JobObjectThreadImpersonationInformation, [1]);
+            _api.SetJob(_jobLease, NativeJobConstants.JobObjectThreadImpersonationInformation, [1]);
 
         if (server)
-            _api.RegisterServer(JobHandle);
+            _api.RegisterServer(_jobLease);
         else if (description.ObjectNamespace is not null)
-            _api.AssignProcess(JobHandle, NativeJobConstants.WcObjectNamespaceAssignmentProcess);
+            _api.AssignProcess(_jobLease, NativeJobConstants.WcObjectNamespaceAssignmentProcess);
 
         if (description.ObjectNamespace is { } objects)
-            _api.SetupObjects(JobHandle, objects);
+            _api.SetupObjects(_jobLease, objects);
 
         if (description.FileSystem is { } files)
         {
-            _fileSystemRollback = _api.CreateFileSystemRegistration(JobHandle);
+            _fileSystemRollback = _api.CreateFileSystemRegistration(_jobLease);
             _fileSystemRollback.Setup(files);
         }
 
         if (description.Registry is { } keys)
         {
-            _api.SetupRegistry(JobHandle, keys);
+            _api.SetupRegistry(_jobLease, keys);
             _registry = true;
         }
 
         if (description.NetworkCompartment is { } network)
         {
             if (network.Length != 0)
-                _api.SetupNetwork(JobHandle, network);
+                _api.SetupNetwork(_jobLease, network);
 
             _networkCleanupArmed = true;
         }
 
         if (description.Mounts is { } mounts)
-            _api.SetupMounts(JobHandle, mounts);
+            _api.SetupMounts(_jobLease, mounts);
+
         if (description.NamedPipes is { } pipes)
-            _api.SetupPipes(JobHandle, pipes);
+            _api.SetupPipes(_jobLease, pipes);
 
         _providersConfigured = true;
         if (server)
-            _api.ConfigureServerImage(JobHandle, description.Downlevel);
+            _api.ConfigureServerImage(_jobLease, description.Downlevel);
 
         _fileSystemRollback = null;
     }
@@ -323,19 +324,19 @@ public sealed partial class WindowsSilo : IDisposable
 
     public void Terminate(int status = 0) => Use(handle => _api.Terminate(handle, status));
 
-    private T Use<T>(Func<nint, T> action)
+    private T Use<T>(Func<JobSafeHandle, T> action)
     {
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_jobLease.IsClosed, this);
 
-            var result = action(JobHandle);
+            var result = action(_jobLease);
             GC.KeepAlive(_jobLease);
             return result;
         }
     }
 
-    private void Use(Action<nint> action) => Use(handle =>
+    private void Use(Action<JobSafeHandle> action) => Use(handle =>
     {
         action(handle);
         return true;
@@ -353,7 +354,7 @@ public sealed partial class WindowsSilo : IDisposable
             if (_jobLease.IsClosed)
                 return;
 
-            _ = _api.GetId(JobHandle);
+            _ = _api.GetId(_jobLease);
             if (volumePath is not null)
             {
                 var terminator = volumePath.IndexOf('\0');
@@ -361,9 +362,9 @@ public sealed partial class WindowsSilo : IDisposable
                     volumePath = volumePath[..terminator];
             }
 
-            _api.CleanupNetwork(JobHandle);
-            _api.CleanupRegistry(JobHandle);
-            _api.CleanupFileSystem(JobHandle, volumePath);
+            _api.CleanupNetwork(_jobLease);
+            _api.CleanupRegistry(_jobLease);
+            _api.CleanupFileSystem(_jobLease, volumePath);
             _hasCompletedCleanup = true;
 
             GC.KeepAlive(_jobLease);
@@ -375,12 +376,18 @@ public sealed partial class WindowsSilo : IDisposable
         try
         {
             List<Exception> failures = [];
+
+            // ReSharper disable once AccessToDisposedClosure
             if (_networkCleanupArmed || _providersConfigured)
-                CleanupProvider(() => _api.CleanupNetwork(JobHandle), failures);
+                CleanupProvider(() => _api.CleanupNetwork(_jobLease), failures);
+
+            // ReSharper disable once AccessToDisposedClosure
             if (_registry || _providersConfigured)
-                CleanupProvider(() => _api.CleanupRegistry(JobHandle), failures);
+                CleanupProvider(() => _api.CleanupRegistry(_jobLease), failures);
+
             if (_fileSystemRollback is { } registration)
                 CleanupProvider(registration.Rollback, failures);
+
             if (failures.Count != 0)
                 throw new AggregateException("Silo creation rollback failed.", failures);
         }
@@ -399,59 +406,6 @@ public sealed partial class WindowsSilo : IDisposable
         catch (Exception failure)
         {
             failures.Add(failure);
-        }
-    }
-
-    private sealed class BorrowedJob : SafeHandle
-    {
-        private readonly SafeHandle source;
-
-        internal BorrowedJob(SafeHandle source) : base(0, ownsHandle: true)
-        {
-            this.source = source;
-            var borrowed = false;
-            try
-            {
-                source.DangerousAddRef(ref borrowed);
-                var value = source.DangerousGetHandle();
-                if (source.IsInvalid || value is 0 or -1)
-                    throw new ArgumentException("A valid job handle is required.", nameof(source));
-
-                SetHandle(value);
-            }
-            catch
-            {
-                if (borrowed)
-                    source.DangerousRelease();
-                throw;
-            }
-        }
-
-        public override bool IsInvalid => handle == 0;
-
-        protected override bool ReleaseHandle()
-        {
-            source.DangerousRelease();
-            return true;
-        }
-    }
-
-    private sealed class OwnedJob : SafeHandle
-    {
-        private readonly ISiloApi api;
-
-        internal OwnedJob(ISiloApi api) : base(0, ownsHandle: true)
-        {
-            this.api = api;
-            SetHandle(api.CreateJob());
-        }
-
-        public override bool IsInvalid => handle is 0 or -1;
-
-        protected override bool ReleaseHandle()
-        {
-            api.Close(handle);
-            return true;
         }
     }
 }

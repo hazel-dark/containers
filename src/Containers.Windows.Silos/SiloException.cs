@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.Diagnostics.Debug;
+using Wdk = Windows.Wdk.PInvoke;
 
 namespace Containers.Windows.Silos;
 
@@ -38,7 +39,7 @@ public sealed class SiloException : Exception
         if (status >= 0)
             return;
 
-        var dosError = OperatingSystem.IsWindows() ? NativeMethods.RtlNtStatusToDosErrorNoTeb(status) : 0;
+        var dosError = OperatingSystem.IsWindows() ? Wdk.RtlNtStatusToDosErrorNoTeb(new NTSTATUS(status)) : 0;
         throw new SiloException(operation, $"NTSTATUS 0x{status:x8}", MapNtStatus(status, dosError), ntStatus: status);
     }
 

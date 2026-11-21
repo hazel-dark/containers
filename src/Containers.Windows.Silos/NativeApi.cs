@@ -1,3 +1,4 @@
+using Wdk = Windows.Wdk.PInvoke;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Microsoft.Win32.SafeHandles;
@@ -16,18 +17,23 @@ internal sealed unsafe partial class NativeApi : ISiloApi
 
     internal NativeApi(PlatformProvider platform) => _platform = platform;
 
-    public nint CreateJob()
+    public JobSafeHandle CreateJob()
     {
-        SiloException.CheckNt(NativeMethods.NtCreateJobObject(out var job, NativeJobConstants.JobObjectAllAccess, null), "NtCreateJobObject");
+        var status = NativeMethods.NtCreateJobObject(out var job, NativeJobConstants.JobObjectAllAccess, null);
+        if (status < 0)
+        {
+            job.Dispose();
+            SiloException.CheckNt(status, "NtCreateJobObject");
+        }
         return job;
     }
 
-    public void Close(nint handle)
+    private void Close(nint handle)
     {
         if (handle != 0 && handle != -1) _platform.Close(handle);
     }
 
-    public int SetJob(nint job, int informationClass, Span<byte> data)
+    public int SetJob(JobSafeHandle job, int informationClass, Span<byte> data)
     {
         fixed (byte* p = data)
         {
@@ -37,24 +43,24 @@ internal sealed unsafe partial class NativeApi : ISiloApi
         }
     }
 
-    public int QueryJob(nint job, int informationClass, Span<byte> data)
+    public int QueryJob(JobSafeHandle job, int informationClass, Span<byte> data)
     {
         fixed (byte* p = data)
             return _platform.QueryJob(job, informationClass, p, (uint)data.Length, null);
     }
 
-    public void SetSystemRoot(nint job, string root)
+    public void SetSystemRoot(JobSafeHandle job, string root)
     {
         fixed (char* p = root)
         {
             var terminator = root.IndexOf('\0');
-            var name = new UnicodeString(p, terminator < 0 ? root.Length : terminator);
-            SiloException.CheckNt(_platform.SetJob(job, NativeJobConstants.JobObjectSiloSystemRoot, &name, (uint)sizeof(UnicodeString)), "SetSiloSystemRoot");
+            var name = NativeBuffer.UnicodeString(p, terminator < 0 ? root.Length : terminator);
+            SiloException.CheckNt(_platform.SetJob(job, NativeJobConstants.JobObjectSiloSystemRoot, &name, (uint)sizeof(UNICODE_STRING)), "SetSiloSystemRoot");
         }
     }
 
-    public void AssignProcess(nint job, nint process) => SiloException.CheckNt(NativeMethods.NtAssignProcessToJobObject(job, process), "NtAssignProcessToJobObject");
-    public void Terminate(nint job, int status) => SiloException.CheckNt(NativeMethods.NtTerminateJobObject(job, status), "NtTerminateJobObject");
+    public void AssignProcess(JobSafeHandle job, nint process) => SiloException.CheckNt(NativeMethods.NtAssignProcessToJobObject(job, process), "NtAssignProcessToJobObject");
+    public void Terminate(JobSafeHandle job, int status) => SiloException.CheckNt(NativeMethods.NtTerminateJobObject(job, status), "NtTerminateJobObject");
 
     private void Ioctl(SafeFileHandle handle, uint code, ReadOnlySpan<byte> input, Span<byte> output = default, int acceptedError = 0)
     {
@@ -63,26 +69,29 @@ internal sealed unsafe partial class NativeApi : ISiloApi
             SiloException.CheckWin32(error, $"DeviceIoControl(0x{code:x})");
     }
 
-    public void RegisterServer(nint job)
+    public void RegisterServer(JobSafeHandle job)
     {
         const GENERIC_ACCESS_RIGHTS access = GENERIC_ACCESS_RIGHTS.GENERIC_READ | GENERIC_ACCESS_RIGHTS.GENERIC_WRITE;
         using var dam = PInvoke.CreateFile(@"\\.\DamCtrl", (uint)access, 0, null, FILE_CREATION_DISPOSITION.OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_NORMAL);
+        var jobValue = job.DangerousGetHandle();
         if (dam.DangerousGetHandle() == -1)
             SendSm(job, NativeJobConstants.WcSmRegisterServerSiloApi);
-        else if (!PInvoke.DeviceIoControl(new HANDLE(dam.DangerousGetHandle()), NativeJobConstants.WcDamRegisterSiloControlCode, &job, (uint)sizeof(nint), null, 0, null, null))
+        else if (!PInvoke.DeviceIoControl(new HANDLE(dam.DangerousGetHandle()), NativeJobConstants.WcDamRegisterSiloControlCode, &jobValue, (uint)sizeof(nint), null, 0, null, null))
             SiloException.CheckWin32(GetLastErrorOrDefault(), "Register silo with DAM");
     }
 
-    public void Boot(nint job) => SendSm(job, NativeJobConstants.SmStartServerSiloApi);
+    public void Boot(JobSafeHandle job) => SendSm(job, NativeJobConstants.SmStartServerSiloApi);
 
-    private void SendSm(nint job, uint api)
+    private void SendSm(JobSafeHandle job, uint api)
     {
         nint port = 0;
         try
         {
             SiloException.CheckNt(NativeMethods.RtlConnectToSm(null, 0, 0, out port), "RtlConnectToSm");
 
-            var message = new SmMessage { ApiNumber = api, Silo = job };
+            var message = new SmMessage();
+            message.ApiNumber = api;
+            message.Silo = job.DangerousGetHandle();
             SiloException.CheckNt(NativeMethods.RtlSendMsgToSm(port, &message), $"RtlSendMsgToSm({api})");
         }
         finally
@@ -91,18 +100,19 @@ internal sealed unsafe partial class NativeApi : ISiloApi
         }
     }
 
-    public bool IsServer(nint job)
+    public bool IsServer(JobSafeHandle job)
     {
         SERVERSILO_BASIC_INFORMATION info = default;
         // Server 2022 takes the prefix ending immediately before ContainerBuildNumber.
         var status = QueryJob(job, NativeJobConstants.JobObjectServerSiloBasicInformation, info.AsBytes()[..NativeJobConstants.ServerSiloBasicInformationSize]);
-        if (status == NTSTATUS.STATUS_JOB_NO_CONTAINER) return false;
+        if (status == NTSTATUS.STATUS_JOB_NO_CONTAINER)
+            return false;
 
         SiloException.CheckNt(status, "QueryServerSiloBasicInformation");
         return true;
     }
 
-    public string GetObjectRoot(nint job)
+    public string GetObjectRoot(JobSafeHandle job)
     {
         Span<byte> initial = stackalloc byte[NativeJobConstants.SiloObjectRootInitialBufferSize];
         var size = initial.Length;
@@ -129,7 +139,7 @@ internal sealed unsafe partial class NativeApi : ISiloApi
         }
     }
 
-    public Guid GetId(nint job)
+    public Guid GetId(JobSafeHandle job)
     {
         Span<byte> data = stackalloc byte[NativeJobConstants.ContainerIdInformationSize];
         data.Clear();
@@ -137,10 +147,8 @@ internal sealed unsafe partial class NativeApi : ISiloApi
         return new Guid(data[..sizeof(Guid)]);
     }
 
-    public string GetRegistryRoot(nint job) => FormatRegistryRoot(GetId(job), "");
+    public string GetRegistryRoot(JobSafeHandle job) => FormatRegistryRoot(GetId(job), "");
 
-    // RtlStringFromGUIDEx formats with lowercase %x. container.dll at 0x18002951b
-    // skips the leading brace and overwrites the trailing brace before appending a suffix.
     private static string FormatRegistryRoot(Guid id, string suffix) => @"\Registry\WC\Silo" + id.ToString("D") + suffix;
 
     private static int GetLastErrorOrDefault()
@@ -158,12 +166,12 @@ internal sealed unsafe partial class NativeApi : ISiloApi
     // Native call boundary used by portable provider regression tests.
     internal partial class PlatformProvider
     {
-        internal virtual void Close(nint handle) => NativeMethods.NtClose(handle);
+        internal virtual void Close(nint handle) => Wdk.NtClose((HANDLE)handle);
 
-        internal virtual int SetJob(nint job, int informationClass, void* data, uint length)
+        internal virtual int SetJob(JobSafeHandle job, int informationClass, void* data, uint length)
             => NativeMethods.NtSetInformationJobObject(job, informationClass, data, length);
 
-        internal virtual int QueryJob(nint job, int informationClass, void* data, uint length, uint* returned)
+        internal virtual int QueryJob(JobSafeHandle job, int informationClass, void* data, uint length, uint* returned)
             => NativeMethods.NtQueryInformationJobObject(job, informationClass, data, length, returned);
 
         internal virtual SafeFileHandle OpenDevice(string name, uint access, nint templateHandle)
