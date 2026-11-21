@@ -29,6 +29,10 @@ while (!silo.IsQuiescent)
 silo.Cleanup();
 ```
 
+For a session-0 service that launches a worker under a fresh domain logon,
+see the tested Object Manager links for drive lookup, automatic desktop
+creation, and COM STA startup. [Non-server domain-worker configuration](docs/windows-silo-object-manager.md#host-links-for-session-0-domain-workers)
+
 For a server silo, supply the image's filesystem and virtual registry
 configuration when calling `Create` or `ConfigureJob` with `server: true`.
 Creation registers the silo with DAM or SMSS and checks the image against the

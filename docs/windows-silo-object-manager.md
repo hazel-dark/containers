@@ -149,6 +149,70 @@ same `Global\` name concurrently under the example configuration. The control
 run without `<ob>` showed contention on the host mutex. A native child also
 passed the private-mutex check on Server 2025 build 26100.32230. A PowerShell
 child timed out before readiness with the private directory on both OS families,
-using either the managed port or the inbox Wc implementation. The recorded
-checks cover these named opens. Interactive-session lookup, full server boot,
-and host RPC or domain authentication remain open. [Server 2022 results](progress.md#two-concurrent-non-server-silo-writers-on-windows) · [Server 2025 results](../src/Containers.Windows.Silos2025/README.md#windows-verification)
+using either the managed port or the inbox Wc implementation. The following profile was tested separately with domain-user
+workers and PowerShell STA. [Windows view tests](../tests/Containers.Windows.Silos.Tests/WindowsViewTests.cs) · [Server 2025 results](../src/Containers.Windows.Silos2025/README.md#windows-verification)
+
+## Host links for session-0 domain workers
+
+Use this profile when a LocalSystem service launches a worker under a fresh
+domain logon in session 0 and needs private `Global\` names plus selected file
+overrides. The service configured its own job with `ConfigureJob(..., server: false)`,
+then passed the domain token to `CreateProcessAsUserW` with that job in
+`PROC_THREAD_ATTRIBUTE_JOB_LIST` and `lpDesktop = null`. The library's
+non-server `LaunchApplication` uses the caller's primary security context.
+Add file or folder overrides separately with `BindMapping`. [Launch implementation](../src/Containers.Windows.Silos/NativeApi.Process.cs) · [Bind mappings](windows-silo-filesystem.md)
+
+```xml
+<container>
+  <namespace>
+    <ob shadow="true">
+      <objdir name="BaseNamedObjects" clonesd="\BaseNamedObjects" shadow="true">
+        <objdir name="Global" clonesd="\BaseNamedObjects" shadow="false"/>
+        <symlink name="Local" path="\BaseNamedObjects" scope="global"/>
+      </objdir>
+      <symlink name="Sessions" path="\Sessions" scope="global"/>
+      <symlink name="Windows" path="\Windows" scope="global"/>
+      <symlink name="RPC Control" path="\RPC Control" scope="global"/>
+    </ob>
+  </namespace>
+</container>
+```
+
+A shadowed directory lets an ordinary open fall back to an existing host name.
+On the traced Server 2022 kernel, creating a new named object did not use that
+fallback to find missing intermediate directories. An explicit global link
+gives the silo a real entry to follow into the host directory. New children
+created there are host-visible and subject to the worker token's access rights.
+
+| Link directly under `<ob>` | When it matters |
+|---|---|
+| `Sessions` → `\Sessions` | On a cold start, Windows may need to create `\Sessions\0\DosDevices\<logon-LUID>` for the domain token's DOS-device map. With shadowing alone, that create returned `STATUS_OBJECT_PATH_NOT_FOUND`: the worker could open a file via `\GLOBAL??\C:` while ordinary `C:\` and UNC paths failed. Linking the parent lets Windows initialize the map. An already initialized logon can mask the problem. |
+| `Windows` → `\Windows` | With no inherited station and a null desktop, Win32k may need to create the logon's `Service-…$` window station under `\Windows\WindowStations`, followed by its `Default` desktop. The link lets that creation reach the host parent. A worker can have working drives and still fail USER32 initialization. |
+| `RPC Control` → `\RPC Control` | A classic COM STA wait can register an `OLE…` local RPC endpoint (an ALPC port). On Server 2022, the STA wait failed with root shadowing alone and with a private shadowed `RPC Control`. Sharing the host directory restored the wait and PowerShell STA startup. The trace did not isolate the individual failing RPC call. |
+
+The `Global` child under `BaseNamedObjects` is a **private directory**. Two
+workers in different silos could hold the same `Global\BuildLock` concurrently.
+Other objects using that prefix, including events and shared memory, are private
+too. The `Local` link deliberately shares the host's session-0 named objects.
+For an unprefixed mutex, opening an existing name could find the host mutex
+through the shadow, while creating that name could produce a silo-local mutex.
+
+The three root links share entire host subtrees. A narrower session-0 variant
+tested on Server 2022 created shadowed `Sessions` and `0` directories inside
+the silo and linked only their `DosDevices` child to `\Sessions\0\DosDevices`
+with global scope. It also created a shadowed `Windows` directory with a private
+`WindowStations` child so that fresh stations were created inside the silo.
+Keep DOS-device lookup token-specific: copying LocalSystem's `\??` target
+would give a domain worker the service's drive view. The tested profile uses
+ordinary `global` scope for all three host links and needs no explicit
+`Device` or `Registry` link.
+
+The XML above passed on Server 2022 Core build `20348.587` and Server 2025
+Core build `26100.32230` for interactive, batch, and service logons, all in
+session 0. The workers started without a desktop keeper or drive priming,
+used separate Bind-backed files, ran PowerShell STA, read a restricted file
+through DFS, and authenticated to SQL Server with Kerberos. On Server 2025
+after a reboot, removing just `Sessions` broke drive and UNC lookup while the
+worker still obtained its desktop. These results cover the tested session-0
+workloads. Interactive desktop sessions and other applications can have
+different namespace dependencies.
