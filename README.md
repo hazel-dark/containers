@@ -51,6 +51,9 @@ If creation fails, rollback attempts to remove the Bind mappings already
 installed and uses the WCI configuration’s `DetachVolumePath` or scratch path
 for detachment. On disposal the controller runs null-path cleanup if no
 explicit cleanup has succeeded, then releases its job reference in all cases.
+If you own the job lifetime and its providers need no explicit cleanup, call
+`DisposeWithoutProviderCleanup()` to release just the controller’s job reference.
+A live job keeps its Bind Filter mappings until the job is destroyed.
 
 A termination registration owns a duplicate of the job handle. Reading
 `ReadAsync` consumes reasons dispatched by the native callback. Calling

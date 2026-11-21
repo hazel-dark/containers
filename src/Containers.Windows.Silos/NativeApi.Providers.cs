@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.Win32.SafeHandles;
 using Windows.Wdk.Storage.FileSystem;
 using Windows.Win32.Foundation;
@@ -63,17 +64,41 @@ internal sealed unsafe partial class NativeApi
         using (var host = _platform.OpenDevice(@"\\.\MountPointManager", mountAccess, WcMountManagerTemplateHandle))
             Ioctl(host, IoctlMountMgrSiloArrival, jobHandle.AsBytes());
 
+        Span<byte> stackBuffer = stackalloc byte[256];
         foreach (var mount in mounts)
         {
             var root = GetObjectRoot(job);
             var linkName = @"\DosDevices\" + _platform.UpperCharacter(mount.Drive) + ":";
             using var device = _platform.OpenDevice(@"\\?\" + root + @"\Device\MountPointManager", mountAccess, WcMountManagerTemplateHandle);
 
-            Ioctl(device, IoctlMountMgrVolumeArrivalNotification, Pack.MountTarget(mount.Target));
+            using (var buffer = MountTarget(stackBuffer, mount.Target))
+                Ioctl(device, IoctlMountMgrVolumeArrivalNotification, buffer.Span);
 
-            var point = Pack.MountPoint(linkName, mount.Target);
             // SetVolumeNameForRoot treats ERROR_INVALID_PARAMETER (0x57) as accepted.
-            Ioctl(device, IoctlMountMgrCreatePoint, point, acceptedError: (int)WIN32_ERROR.ERROR_INVALID_PARAMETER);
+            using (var point = MountPoint(stackBuffer, linkName, mount.Target))
+                Ioctl(device, IoctlMountMgrCreatePoint, point.Span, acceptedError: (int)WIN32_ERROR.ERROR_INVALID_PARAMETER);
+        }
+
+        return;
+
+        // mountmgr.h MOUNTMGR_TARGET_NAME starts with a USHORT byte count, followed by WCHARs.
+        // Wc includes two terminating WCHARs outside the counted name.
+        static NativeScratchBuffer<byte> MountTarget(Span<byte> stackBuffer, string deviceName)
+        {
+            var header = checked((ushort)(deviceName.Length * sizeof(char)));
+            return NativeBuffer.Strings(stackBuffer, in header, deviceName, "\0\0");
+        }
+
+        static NativeScratchBuffer<byte> MountPoint(Span<byte> stackBuffer, string linkName, string deviceName)
+        {
+            var header = new MountMgrCreatePointInput
+            {
+                SymbolicLinkNameOffset = checked((ushort)Unsafe.SizeOf<MountMgrCreatePointInput>()),
+                SymbolicLinkNameLength = checked((ushort)(linkName.Length * sizeof(char))),
+                DeviceNameLength = checked((ushort)(deviceName.Length * sizeof(char))),
+            };
+            header.DeviceNameOffset = checked((ushort)(header.SymbolicLinkNameOffset + header.SymbolicLinkNameLength));
+            return NativeBuffer.Strings(stackBuffer, in header, linkName, deviceName);
         }
     }
 
@@ -87,15 +112,31 @@ internal sealed unsafe partial class NativeApi
             return;
 
         using var device = _platform.OpenDevice(@"\\?\" + GetObjectRoot(job) + @"\Device\NamedPipe", (uint)GENERIC_ACCESS_RIGHTS.GENERIC_WRITE, 0);
+
+        Span<byte> stackBuffer = stackalloc byte[256];
         var maximumNameLength = (ushort.MaxValue - sizeof(FILE_PIPE_CREATE_SYMLINK_INPUT)) / sizeof(char);
         foreach (var pipe in pipes)
         {
             if (pipe.Name.Length > maximumNameLength || pipe.Target.Length > ushort.MaxValue / sizeof(char))
                 SiloException.CheckNt(NTSTATUS.STATUS_INVALID_PARAMETER.Value, "Build NPFS symbolic link");
 
-            var data = Pack.PipeSymlink(pipe.Name, pipe.Target);
-            SiloException.CheckNt(_platform.FsControl(device, Wdk.FSCTL_PIPE_CREATE_SYMLINK, data), "NtFsControlFile(0x11004c)");
+            using var data = PipeSymlink(stackBuffer, pipe.Name, pipe.Target);
+            SiloException.CheckNt(_platform.FsControl(device, Wdk.FSCTL_PIPE_CREATE_SYMLINK, data.Span), "NtFsControlFile(0x11004c)");
         }
+    }
+
+    internal static NativeScratchBuffer<byte> PipeSymlink(Span<byte> stackBuffer, string name, string target)
+    {
+        var nameOffset = Unsafe.SizeOf<FILE_PIPE_CREATE_SYMLINK_INPUT>();
+        var header = new FILE_PIPE_CREATE_SYMLINK_INPUT
+        {
+            NameOffset = checked((ushort)nameOffset),
+            NameLength = checked((ushort)(name.Length * sizeof(char))),
+            SubstituteNameOffset = checked((ushort)(nameOffset + name.Length * sizeof(char))),
+            SubstituteNameLength = checked((ushort)(target.Length * sizeof(char))),
+            Flags = Wdk.FILE_PIPE_SYMLINK_FLAG_GLOBAL,
+        };
+        return NativeBuffer.Strings(stackBuffer, in header, name, target);
     }
 
     internal partial class PlatformProvider

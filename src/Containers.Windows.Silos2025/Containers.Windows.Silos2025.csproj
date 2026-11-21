@@ -22,7 +22,6 @@
         <Compile Include="../Containers.Windows.Silos/NativeProviderConstants.cs" Link="Shared/NativeProviderConstants.cs" />
         <Compile Include="../Containers.Windows.Silos/NativeTypes.cs" Link="Shared/NativeTypes.cs" />
         <Compile Include="../Containers.Windows.Silos/NativeTypes.VReg.cs" Link="Shared/NativeTypes.VReg.cs" />
-        <Compile Include="../Containers.Windows.Silos/Pack.cs" Link="Shared/Pack.cs" />
         <Compile Include="../Containers.Windows.Silos/SiloDescriptionXml.cs" Link="Shared/SiloDescriptionXml.cs" />
         <Compile Include="../Containers.Windows.Silos/SiloEventSource.cs" Link="Shared/SileEventSource.cs" />
         <Compile Include="../Containers.Windows.Silos/SiloException.cs" Link="Shared/SiloException.cs" />

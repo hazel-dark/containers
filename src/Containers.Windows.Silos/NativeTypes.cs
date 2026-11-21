@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.JobObjects;
@@ -9,6 +10,32 @@ internal static class NativeBuffer
 {
     internal static Span<byte> AsBytes<T>(this ref T value) where T : unmanaged =>
         MemoryMarshal.AsBytes(new Span<T>(ref value));
+
+    internal static NativeScratchBuffer<byte> Strings<T>(Span<byte> stackBuffer, scoped in T header, params ReadOnlySpan<string> strings)
+        where T : unmanaged
+    {
+        var size = Unsafe.SizeOf<T>();
+        foreach (var value in strings)
+            size = checked(size + value.Length * sizeof(char));
+
+        var result = new NativeScratchBuffer<byte>(stackBuffer, size);
+        result.Span.Clear();
+
+        var data = result.Span;
+        MemoryMarshal.Write(data, in header);
+
+        var offset = Unsafe.SizeOf<T>();
+        foreach (var value in strings)
+            offset += WriteString(data.Slice(offset), value);
+
+        return result;
+    }
+
+    internal static int WriteString(Span<byte> data, string value)
+    {
+        MemoryMarshal.AsBytes(value.AsSpan()).CopyTo(data);
+        return checked(value.Length * 2);
+    }
 }
 
 internal readonly ref struct NativeScratchBuffer<T> where T : unmanaged

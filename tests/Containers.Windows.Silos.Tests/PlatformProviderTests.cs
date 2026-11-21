@@ -201,19 +201,24 @@ public sealed unsafe class PlatformProviderTests
     {
         var maximum = new string('x', 0x7fff);
         var excessive = maximum + "x";
-        var redirect = NativeApi.PackRegistryRedirection(Job, new RegistryRedirection(maximum), maximum);
-        Assert.Equal("FEFFFEFF", Convert.ToHexString(redirect.AsSpan(8, 4)));
+        using var redirect = NativeApi.PackRegistryRedirection(stackalloc byte[256], Job, new RegistryRedirection(maximum), maximum);
+        Assert.Equal("FEFFFEFF", Convert.ToHexString(redirect.Span.Slice(8, 4)));
         var records = NativeApi.PackRuntimeVirtualKeys(Job, [new RuntimeVirtualKey(maximum, "A"), new RuntimeVirtualKey("B", maximum)]);
         Assert.Equal("FEFF020000000000", Convert.ToHexString(records.AsSpan(16, 8)));
         Assert.Equal("0200FEFF00000000", Convert.ToHexString(records.AsSpan(16 + 12 + 0xfffe + 2, 8)));
         Assert.Equal(Encoding.Unicode.GetBytes(maximum), records[^0xfffe..]);
 
-        Assert.Equal(Overflow, Assert.Throws<SiloException>(() => NativeApi.PackRegistryRedirection(Job, new RegistryRedirection(excessive), "")).NtStatus);
-        Assert.Equal(Overflow, Assert.Throws<SiloException>(() => NativeApi.PackRegistryRedirection(Job, new RegistryRedirection(""), excessive)).NtStatus);
+        Assert.Equal(Overflow, Assert.Throws<SiloException>(() => PackRedirection(excessive, "")).NtStatus);
+        Assert.Equal(Overflow, Assert.Throws<SiloException>(() => PackRedirection("", excessive)).NtStatus);
         Assert.Equal(Overflow, Assert.Throws<SiloException>(() => NativeApi.PackRuntimeVirtualKeys(Job, [new RuntimeVirtualKey(excessive, "")])).NtStatus);
         Assert.Equal(Overflow, Assert.Throws<SiloException>(() => NativeApi.PackRuntimeVirtualKeys(Job, [new RuntimeVirtualKey("", excessive)])).NtStatus);
         var repeated = Enumerable.Repeat(new RuntimeVirtualKey(maximum, maximum), 17000).ToArray();
         Assert.Equal(Overflow, Assert.Throws<SiloException>(() => NativeApi.PackRuntimeVirtualKeys(Job, repeated)).NtStatus);
+
+        static void PackRedirection(string path, string target)
+        {
+            using var packet = NativeApi.PackRegistryRedirection(default, Job, new RegistryRedirection(path), target);
+        }
     }
 
     [Theory]

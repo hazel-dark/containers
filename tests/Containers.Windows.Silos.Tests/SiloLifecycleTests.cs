@@ -281,6 +281,29 @@ public sealed class SiloLifecycleTests
         Assert.Equal(["cleanup-network", "cleanup-registry", "rollback-files", "close"], api.Calls.TakeLast(4));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void DisposeWithoutProviderCleanupReleasesOnlyTheJobReference(bool borrowed)
+    {
+        var api = new RecordingApi();
+        using var caller = new CountingHandle(0x1234);
+        using var silo = borrowed
+            ? WindowsSilo.ConfigureJob(caller, new SiloDescription(), false, api)
+            : WindowsSilo.Create(new SiloDescription(), false, api);
+        api.Calls.Clear();
+
+        silo.DisposeWithoutProviderCleanup();
+        silo.DisposeWithoutProviderCleanup();
+        silo.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => silo.Identifier);
+        Assert.Equal(borrowed ? Array.Empty<string>() : ["close"], api.Calls);
+        Assert.Equal(0, caller.Closes);
+        caller.Dispose();
+        Assert.Equal(1, caller.Closes);
+    }
+
     [Fact]
     public void BorrowedJobIsKeptAliveWithoutTransferringOwnership()
     {

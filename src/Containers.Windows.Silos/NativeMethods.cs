@@ -27,32 +27,43 @@ internal static unsafe partial class NativeMethods
     [LibraryImport("ntdll.dll")] internal static partial int NtFsControlFile(nint handle, nint ev, nint apc, nint context, out IoStatusBlock io, uint code, void* input, uint inputLength, void* output, uint outputLength);
     [LibraryImport("ntdll.dll")] internal static partial int NtCreateDirectoryObjectEx(out nint handle, uint access, ObjectAttributes* attributes, nint shadow, uint flags);
     [LibraryImport("ntdll.dll")] internal static partial int NtOpenDirectoryObject(out nint handle, uint access, ObjectAttributes* attributes);
-    [LibraryImport("ntdll.dll")] internal static partial int NtCreateSymbolicLinkObject(out nint handle, uint access, ObjectAttributes* attributes, UnicodeString* target);
     [LibraryImport("ntdll.dll")] internal static partial int NtOpenSymbolicLinkObject(out nint handle, uint access, ObjectAttributes* attributes);
     [LibraryImport("ntdll.dll")] internal static partial int NtQuerySymbolicLinkObject(nint handle, UnicodeString* target, uint* length);
     [LibraryImport("ntdll.dll")] internal static partial int NtSetInformationSymbolicLink(nint handle, int informationClass, void* data, uint size);
     [LibraryImport("ntdll.dll")] internal static partial int NtQuerySecurityObject(nint handle, uint information, void* security, uint length, out uint needed);
-    [LibraryImport("ntdll.dll")] internal static partial int NtCreateKey(out nint key, uint access, ObjectAttributes* attributes, uint title, UnicodeString* keyClass, uint options, out uint disposition);
     [LibraryImport("ntdll.dll")] internal static partial int NtOpenKey(out nint key, uint access, ObjectAttributes* attributes);
     [LibraryImport("ntdll.dll")] internal static partial int NtDeleteKey(nint key);
     [LibraryImport("ntdll.dll")] internal static partial int NtQueryKey(nint key, int informationClass, void* data, uint length, out uint needed);
     [LibraryImport("ntdll.dll")] internal static partial int NtEnumerateKey(nint key, uint index, int informationClass, void* data, uint length, out uint needed);
     [LibraryImport("ntdll.dll")] internal static partial int NtSetValueKey(nint key, UnicodeString* name, uint title, uint type, void* data, uint length);
-    [LibraryImport("ntdll.dll", EntryPoint = "NtCreateKey")] internal static partial int NtCreateProviderKey(nint* key, uint access, ObjectAttributes* attributes, uint title, UnicodeString* keyClass, uint options, uint* disposition);
-    [LibraryImport("ntdll.dll", EntryPoint = "NtCreateSymbolicLinkObject")] internal static partial int NtCreateProviderSymbolicLink(nint* handle, uint access, ObjectAttributes* attributes, UnicodeString* target);
+    [LibraryImport("ntdll.dll")] internal static partial int NtCreateKey(nint* key, uint access, ObjectAttributes* attributes, uint title, UnicodeString* keyClass, uint options, uint* disposition);
+    [LibraryImport("ntdll.dll")] internal static partial int NtCreateSymbolicLinkObject(nint* handle, uint access, ObjectAttributes* attributes, UnicodeString* target);
 
     [LibraryImport("iphlpapi.dll")] internal static partial void InitializeCompartmentEntry(CompartmentEntry* entry);
     [LibraryImport("iphlpapi.dll")] internal static partial uint CreateCompartment(CompartmentEntry* entry);
     [LibraryImport("iphlpapi.dll")] internal static partial uint DeleteCompartment(uint id);
     [LibraryImport("iphlpapi.dll")] internal static partial uint GetJobCompartmentId(nint job);
     [LibraryImport("iphlpapi.dll")] internal static partial uint SetJobCompartmentId(nint job, uint id);
-    
+
     [LibraryImport("bindfltapi.dll", StringMarshalling = StringMarshalling.Utf16)] internal static partial int BfSetupFilter(nint job, uint flags, string root, string target, nint* exceptions, uint count);
     [LibraryImport("bindfltapi.dll", StringMarshalling = StringMarshalling.Utf16)] internal static partial int BfRemoveMapping(nint job, string root);
     [LibraryImport("wc_storage.dll", StringMarshalling = StringMarshalling.Utf16)] internal static partial int WcAttachFilterEx(nint job, uint isolationMode, string volume, WciLayerDescriptor* layers, uint count, uint nestingMode);
 
     [LibraryImport("bindfltapi.dll", StringMarshalling = StringMarshalling.Utf16)] internal static partial int BfAttachFilter(string volume, int* attached);
     [LibraryImport("bindfltapi.dll")] internal static partial int BfSetupFilterBatched(nint job, nint context, byte* configuration, uint size, uint flags, uint exceptionCount, nint* exceptions);
+
+    internal static int NtCreateSymbolicLinkObject(out nint handle, uint access, ObjectAttributes* attributes, UnicodeString* target)
+    {
+        fixed (nint* output = &handle)
+            return NtCreateSymbolicLinkObject(output, access, attributes, target);
+    }
+
+    internal static int NtCreateKey(out nint key, uint access, ObjectAttributes* attributes, uint title, UnicodeString* keyClass, uint options, out uint disposition)
+    {
+        fixed (nint* output = &key)
+        fixed (uint* outputDisposition = &disposition)
+            return NtCreateKey(output, access, attributes, title, keyClass, options, outputDisposition);
+    }
 }
 
 [StructLayout(LayoutKind.Sequential)]

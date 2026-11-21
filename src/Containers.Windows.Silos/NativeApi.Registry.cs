@@ -27,13 +27,15 @@ internal sealed unsafe partial class NativeApi
             foreach (var stack in configuration.HiveStacks)
                 stacks[NormalizeHiveStackName(stack.Name)] = SetupHiveStack(driver, job, stack);
 
+            Span<byte> stackBuffer = stackalloc byte[256];
             foreach (var redirect in configuration.Redirections)
             {
                 var target = redirect.Target ?? "";
                 if (!string.IsNullOrEmpty(redirect.HiveStack) && !stacks.TryGetValue(NormalizeHiveStackName(redirect.HiveStack), out target!))
                     SiloException.CheckHResult(HRESULT.E_INVALIDARG.Value, "Resolve registry hive stack " + redirect.HiveStack);
 
-                Ioctl(driver, WcVRegAddRedirection, PackRegistryRedirection(job, redirect, target));
+                using (var input = PackRegistryRedirection(stackBuffer, job, redirect, target))
+                    Ioctl(driver, WcVRegAddRedirection, input.Span);
             }
 
             foreach (var link in configuration.Symlinks)
@@ -56,6 +58,7 @@ internal sealed unsafe partial class NativeApi
     private string SetupHiveStack(SafeFileHandle driver, nint job, RegistryHiveStack stack)
     {
         var path = "";
+        Span<byte> stackBuffer = stackalloc byte[256];
         uint previousIsExistingHive = 0;
         foreach (var hive in stack.Hives)
         {
@@ -67,7 +70,9 @@ internal sealed unsafe partial class NativeApi
             }
 
             var mountedPath = FormatRegistryRoot(hive.MountId, stack.Name);
-            Ioctl(driver, WcVRegLoadHive, PackHive(job, hive, mountedPath, path, previousIsExistingHive));
+            using (var input = PackHive(stackBuffer, job, hive, mountedPath, path, previousIsExistingHive))
+                Ioctl(driver, WcVRegLoadHive, input.Span);
+
             previousIsExistingHive = 0;
             path = mountedPath;
         }
@@ -89,7 +94,7 @@ internal sealed unsafe partial class NativeApi
         return path;
     }
 
-    internal static byte[] PackHive(nint job, RegistryHive hive, string mountedPath, string previous, uint previousIsExistingHive)
+    internal static NativeScratchBuffer<byte> PackHive(Span<byte> stackBuffer, nint job, RegistryHive hive, string mountedPath, string previous, uint previousIsExistingHive)
     {
         var header = new VrLoadDifferencingHiveHeader
         {
@@ -102,10 +107,10 @@ internal sealed unsafe partial class NativeApi
             NextLayerKeyPathLength = checked((ushort)(previous.Length * sizeof(char))),
             FileAccessToken = new HANDLE(unchecked((nint)hive.FileAccessToken)),
         };
-        return Pack.Strings(in header, mountedPath, hive.FilePath, previous);
+        return NativeBuffer.Strings(stackBuffer, in header, mountedPath, hive.FilePath, previous);
     }
 
-    internal static byte[] PackRegistryRedirection(nint job, RegistryRedirection redirect, string target)
+    internal static NativeScratchBuffer<byte> PackRegistryRedirection(Span<byte> stackBuffer, nint job, RegistryRedirection redirect, string target)
     {
         var header = new VrCreateNamespaceNodeHeader
         {
@@ -115,7 +120,7 @@ internal sealed unsafe partial class NativeApi
             Flags = (redirect.Trusted ? WcVRegTrustedRedirection : 0) | (redirect.ExitNode ? WcVRegExitNodeRedirection : 0),
             AccessMask = redirect.AccessMask,
         };
-        return Pack.Strings(in header, redirect.Path, target);
+        return NativeBuffer.Strings(stackBuffer, in header, redirect.Path, target);
     }
 
     public void CleanupRegistry(nint job)
@@ -186,8 +191,8 @@ internal sealed unsafe partial class NativeApi
 
             MemoryMarshal.Write(data.AsSpan(offset), in node);
             offset += sizeof(NamespaceNodeDataHeader);
-            offset += Pack.WriteString(data, offset, key.Path);
-            offset += Pack.WriteString(data, offset, key.Target);
+            offset += NativeBuffer.WriteString(data.AsSpan(offset), key.Path);
+            offset += NativeBuffer.WriteString(data.AsSpan(offset), key.Target);
         }
 
         return data;
@@ -409,7 +414,7 @@ internal sealed unsafe partial class NativeApi
             => NativeMethods.NtOpenKey(out key, access, attributes);
 
         internal virtual int CreateKey(nint* key, uint access, ObjectAttributes* attributes, uint options, uint* disposition)
-            => NativeMethods.NtCreateProviderKey(key, access, attributes, 0, null, options, disposition);
+            => NativeMethods.NtCreateKey(key, access, attributes, 0, null, options, disposition);
 
         internal virtual int DeleteKey(nint key) => NativeMethods.NtDeleteKey(key);
 

@@ -77,14 +77,14 @@ public sealed class NativeContractTests
             FilePath = "FILE", ReadOnly = true, Immutable = true,
             InheritTrust = true, TrustedHive = true, WriteThrough = true, FileAccessToken = 0x89ABCDEF01234567
         };
-        var stack = NativeApi.PackHive(RegistryJob, hive, "NEW", "OLD", 1);
+        using var stack = NativeApi.PackHive(stackalloc byte[256], RegistryJob, hive, "NEW", "OLD", 1);
         Assert.Equal(
             "1032547698BADCFE" + "010000000700000000610000060008000600000000000000" +
             "67452301EFCDAB89" + "4E0045005700460049004C0045004F004C004400",
-            Convert.ToHexString(stack));
+            Convert.ToHexString(stack.Span));
 
-        var redirect = NativeApi.PackRegistryRedirection(RegistryJob, new RegistryRedirection("P") { AccessMask = 0x81234567, Trusted = true, ExitNode = true }, "QR");
-        Assert.Equal("1032547698BADCFE020004000600000067452381500051005200", Convert.ToHexString(redirect));
+        using var redirect = NativeApi.PackRegistryRedirection(stackalloc byte[256], RegistryJob, new RegistryRedirection("P") { AccessMask = 0x81234567, Trusted = true, ExitNode = true }, "QR");
+        Assert.Equal("1032547698BADCFE020004000600000067452381500051005200", Convert.ToHexString(redirect.Span));
 
         var runtime = NativeApi.PackRuntimeVirtualKeys(RegistryJob, [new RuntimeVirtualKey("A", "BC", 0x91), new RuntimeVirtualKey("D", "", 0xC0123456)]);
         Assert.Equal("1032547698BADCFE02000000" +
@@ -141,11 +141,16 @@ public sealed class NativeContractTests
         NativeApi.RequireRegistryValuePayload(RegistryValue.Dword("zero", 0));
     }
 
-    [Fact]
-    public void PipePacketOffsetsAreIndependentOfUtf16CodePointCount()
+    [Theory]
+    [InlineData(19, false)]
+    [InlineData(20, true)]
+    public void PipePacketOffsetsAreIndependentOfUtf16CodePointCount(int capacity, bool fitsOnStack)
     {
-        var packet = Pack.PipeSymlink("A\U0001F642", "B");
-        Assert.Equal("0C000600120002000100000041003DD842DE4200", Convert.ToHexString(packet));
+        Span<byte> scratch = stackalloc byte[capacity];
+        scratch.Fill(0xff);
+        using var packet = NativeApi.PipeSymlink(scratch, "A\U0001F642", "B");
+        Assert.Equal("0C000600120002000100000041003DD842DE4200", Convert.ToHexString(packet.Span));
+        Assert.Equal(fitsOnStack, scratch.Overlaps(packet.Span));
     }
 
 #if !SILO2025

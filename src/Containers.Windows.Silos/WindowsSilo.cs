@@ -14,7 +14,7 @@ public sealed partial class WindowsSilo : IDisposable
     private readonly Lock _gate = new Lock();
     private readonly ISiloApi _api;
     private readonly SafeHandle _jobLease;
-    private IFileSystemRegistration? fileSystemRollback;
+    private IFileSystemRegistration? _fileSystemRollback;
     private bool _networkCleanupArmed;
     private bool _registry;
     private bool _hasCompletedCleanup;
@@ -110,6 +110,21 @@ public sealed partial class WindowsSilo : IDisposable
         }
     }
 
+    /// <summary>Releases this controller's job reference without provider cleanup.</summary>
+    /// <remarks>Only use when the caller owns the job lifetime and has not configured
+    /// providers requiring explicit cleanup. In particular, a live job retains its
+    /// Bind Filter mappings until the job is destroyed.</remarks>
+    public void DisposeWithoutProviderCleanup()
+    {
+        lock (_gate)
+        {
+            if (_jobLease.IsClosed)
+                return;
+            _hasCompletedCleanup = true;
+            _jobLease.Dispose();
+        }
+    }
+
     private void Configure(SiloDescription description, bool server)
     {
 
@@ -163,8 +178,8 @@ public sealed partial class WindowsSilo : IDisposable
 
         if (description.FileSystem is { } files)
         {
-            fileSystemRollback = _api.CreateFileSystemRegistration(JobHandle);
-            fileSystemRollback.Setup(files);
+            _fileSystemRollback = _api.CreateFileSystemRegistration(JobHandle);
+            _fileSystemRollback.Setup(files);
         }
 
         if (description.Registry is { } keys)
@@ -190,7 +205,7 @@ public sealed partial class WindowsSilo : IDisposable
         if (server)
             _api.ConfigureServerImage(JobHandle, description.Downlevel);
 
-        fileSystemRollback = null;
+        _fileSystemRollback = null;
     }
 
     /// <summary>Sets the server-silo delete event and asks SMSS to boot the registered container.</summary>
@@ -364,7 +379,7 @@ public sealed partial class WindowsSilo : IDisposable
                 CleanupProvider(() => _api.CleanupNetwork(JobHandle), failures);
             if (_registry || _providersConfigured)
                 CleanupProvider(() => _api.CleanupRegistry(JobHandle), failures);
-            if (fileSystemRollback is { } registration)
+            if (_fileSystemRollback is { } registration)
                 CleanupProvider(registration.Rollback, failures);
             if (failures.Count != 0)
                 throw new AggregateException("Silo creation rollback failed.", failures);

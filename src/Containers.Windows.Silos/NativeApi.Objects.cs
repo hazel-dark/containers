@@ -255,7 +255,7 @@ internal sealed unsafe partial class NativeApi
             => NativeMethods.NtQuerySymbolicLinkObject(handle, target, length);
 
         internal virtual int CreateObjectLink(nint* handle, uint access, ObjectAttributes* attributes, UnicodeString* target)
-            => NativeMethods.NtCreateProviderSymbolicLink(handle, access, attributes, target);
+            => NativeMethods.NtCreateSymbolicLinkObject(handle, access, attributes, target);
 
         internal virtual int SetObjectLink(nint handle, int informationClass, void* data, uint size)
             => NativeMethods.NtSetInformationSymbolicLink(handle, informationClass, data, size);
