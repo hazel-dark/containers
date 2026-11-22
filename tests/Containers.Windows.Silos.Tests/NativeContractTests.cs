@@ -89,11 +89,12 @@ public sealed class NativeContractTests
         using var redirect = NativeApi.PackRegistryRedirection(stackalloc byte[256], RegistryJob, new RegistryRedirection("P") { AccessMask = 0x81234567, Trusted = true, ExitNode = true }, "QR");
         Assert.Equal("1032547698BADCFE020004000600000067452381500051005200", Convert.ToHexString(redirect.Span));
 
-        var runtime = NativeApi.PackRuntimeVirtualKeys(RegistryJob, [new RuntimeVirtualKey("A", "BC", 0x91), new RuntimeVirtualKey("D", "", 0xC0123456)]);
+        using var runtime = NativeApi.PackRuntimeVirtualKeys(stackalloc byte[512], RegistryJob, [new RuntimeVirtualKey("A", "BC", 0x91), new RuntimeVirtualKey("D", "", 0xC0123456)]);
         Assert.Equal("1032547698BADCFE02000000" +
             "910000000200040000000000410042004300" +
-            "563412C002000000000000004400", Convert.ToHexString(runtime));
-        Assert.Equal("1032547698BADCFE00000000", Convert.ToHexString(NativeApi.PackRuntimeVirtualKeys(RegistryJob, [])));
+            "563412C002000000000000004400", Convert.ToHexString(runtime.Span));
+        using var empty = NativeApi.PackRuntimeVirtualKeys(stackalloc byte[512], RegistryJob, []);
+        Assert.Equal("1032547698BADCFE00000000", Convert.ToHexString(empty.Span));
     }
 
     [Fact]

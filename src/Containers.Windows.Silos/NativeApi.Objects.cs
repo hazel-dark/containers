@@ -21,8 +21,10 @@ internal sealed unsafe partial class NativeApi
         if (global is not null)
             flags |= global.Shadow == DirectoryShadow.None ? SiloRootInitializeRoot : SiloRootInitializeRoot | SiloRootShadowGlobal;
 
-        var rootInfo = new SiloObjectRootDirectory();
-        rootInfo.ControlFlags = flags;
+        var rootInfo = new SiloObjectRootDirectory
+        {
+            ControlFlags = flags,
+        };
         SetJob(job, NativeJobConstants.JobObjectSiloRootDirectory, rootInfo.AsBytes());
 
         var root = OpenDirectory(GetObjectRoot(job), DirectoryAllAccess, required: true, attributes: OBJECT_ATTRIBUTE_FLAGS.OBJ_CASE_INSENSITIVE);
@@ -181,8 +183,13 @@ internal sealed unsafe partial class NativeApi
         {
             SiloException.CheckNt(status, "QuerySecurityObjectSize");
             SiloEventSource.Log.UnexpectedSecuritySizeStatus(status);
-            var error = new InvalidDataException($"The security size query unexpectedly returned NTSTATUS 0x{status:x8}.");
-            error.Data["NtStatus"] = status;
+            var error = new InvalidDataException($"The security size query unexpectedly returned NTSTATUS 0x{status:x8}.")
+            {
+                Data =
+                {
+                    ["NtStatus"] = status,
+                },
+            };
             throw error;
         }
 
@@ -211,9 +218,11 @@ internal sealed unsafe partial class NativeApi
                     buffer.Span.Clear();
                     fixed (char* b = buffer.Span)
                     {
-                        var target = new UNICODE_STRING();
-                        target.Buffer = b;
-                        target.MaximumLength = (ushort)size;
+                        var target = new UNICODE_STRING
+                        {
+                            Buffer = b,
+                            MaximumLength = (ushort)size,
+                        };
                         var required = size;
                         var status = _platform.QueryObjectLink(link, &target, &required);
                         if (status == BufferTooSmall)

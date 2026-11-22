@@ -54,8 +54,13 @@ internal sealed unsafe partial class NativeApi : ISiloApi
         fixed (char* p = root)
         {
             var terminator = root.IndexOf('\0');
-            var name = NativeBuffer.UnicodeString(p, terminator < 0 ? root.Length : terminator);
-            SiloException.CheckNt(_platform.SetJob(job, NativeJobConstants.JobObjectSiloSystemRoot, &name, (uint)sizeof(UNICODE_STRING)), "SetSiloSystemRoot");
+
+            // JobObjectSiloSystemRoot requires its information buffer to be 16-byte aligned.
+            const nuint alignmentMask = 15;
+            var storage = stackalloc byte[sizeof(UNICODE_STRING) + (int)alignmentMask];
+            var name = (UNICODE_STRING*)(((nuint)storage + alignmentMask) & ~alignmentMask);
+            *name = NativeBuffer.UnicodeString(p, terminator < 0 ? root.Length : terminator);
+            SiloException.CheckNt(_platform.SetJob(job, NativeJobConstants.JobObjectSiloSystemRoot, name, (uint)sizeof(UNICODE_STRING)), "SetSiloSystemRoot");
         }
     }
 
@@ -89,9 +94,11 @@ internal sealed unsafe partial class NativeApi : ISiloApi
         {
             SiloException.CheckNt(NativeMethods.RtlConnectToSm(null, 0, 0, out port), "RtlConnectToSm");
 
-            var message = new SmMessage();
-            message.ApiNumber = api;
-            message.Silo = job.DangerousGetHandle();
+            var message = new SmMessage
+            {
+                ApiNumber = api,
+                Silo = job.DangerousGetHandle(),
+            };
             SiloException.CheckNt(NativeMethods.RtlSendMsgToSm(port, &message), $"RtlSendMsgToSm({api})");
         }
         finally

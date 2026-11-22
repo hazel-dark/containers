@@ -209,17 +209,22 @@ public sealed unsafe class PlatformProviderTests
         var excessive = maximum + "x";
         using var redirect = NativeApi.PackRegistryRedirection(stackalloc byte[256], Job, new RegistryRedirection(maximum), maximum);
         Assert.Equal("FEFFFEFF", Convert.ToHexString(redirect.Span.Slice(8, 4)));
-        var records = NativeApi.PackRuntimeVirtualKeys(Job, [new RuntimeVirtualKey(maximum, "A"), new RuntimeVirtualKey("B", maximum)]);
-        Assert.Equal("FEFF020000000000", Convert.ToHexString(records.AsSpan(16, 8)));
-        Assert.Equal("0200FEFF00000000", Convert.ToHexString(records.AsSpan(16 + 12 + 0xfffe + 2, 8)));
-        Assert.Equal(Encoding.Unicode.GetBytes(maximum), records[^0xfffe..]);
+        using var records = NativeApi.PackRuntimeVirtualKeys(stackalloc byte[512], Job, [new RuntimeVirtualKey(maximum, "A"), new RuntimeVirtualKey("B", maximum)]);
+        Assert.Equal("FEFF020000000000", Convert.ToHexString(records.Span.Slice(16, 8)));
+        Assert.Equal("0200FEFF00000000", Convert.ToHexString(records.Span.Slice(16 + 12 + 0xfffe + 2, 8)));
+        Assert.Equal(Encoding.Unicode.GetBytes(maximum), records.Span[^0xfffe..]);
 
         Assert.Equal(Overflow, Assert.Throws<SiloException>(() => PackRedirection(excessive, "")).NtStatus);
         Assert.Equal(Overflow, Assert.Throws<SiloException>(() => PackRedirection("", excessive)).NtStatus);
-        Assert.Equal(Overflow, Assert.Throws<SiloException>(() => NativeApi.PackRuntimeVirtualKeys(Job, [new RuntimeVirtualKey(excessive, "")])).NtStatus);
-        Assert.Equal(Overflow, Assert.Throws<SiloException>(() => NativeApi.PackRuntimeVirtualKeys(Job, [new RuntimeVirtualKey("", excessive)])).NtStatus);
+        Assert.Equal(Overflow, Assert.Throws<SiloException>(() => PackKeys([new RuntimeVirtualKey(excessive, "")])).NtStatus);
+        Assert.Equal(Overflow, Assert.Throws<SiloException>(() => PackKeys([new RuntimeVirtualKey("", excessive)])).NtStatus);
         var repeated = Enumerable.Repeat(new RuntimeVirtualKey(maximum, maximum), 17000).ToArray();
-        Assert.Equal(Overflow, Assert.Throws<SiloException>(() => NativeApi.PackRuntimeVirtualKeys(Job, repeated)).NtStatus);
+        Assert.Equal(Overflow, Assert.Throws<SiloException>(() => PackKeys(repeated)).NtStatus);
+
+        static void PackKeys(IReadOnlyList<RuntimeVirtualKey> keys)
+        {
+            using var packet = NativeApi.PackRuntimeVirtualKeys(stackalloc byte[512], Job, keys);
+        }
 
         static void PackRedirection(string path, string target)
         {

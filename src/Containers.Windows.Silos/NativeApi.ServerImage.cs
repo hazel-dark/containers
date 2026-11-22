@@ -80,11 +80,13 @@ internal sealed unsafe partial class NativeApi
 
     private static RegistryQueryEntry QueryDword(char* name, uint* result)
     {
-        var dword = new RegistryQueryEntry();
-        dword.Flags = Wdk.RTL_QUERY_REGISTRY_DIRECT | Wdk.RTL_QUERY_REGISTRY_TYPECHECK;
-        dword.Name = name;
-        dword.EntryContext = result;
-        dword.DefaultType = (uint)REG_VALUE_TYPE.REG_DWORD << (int)Wdk.RTL_QUERY_REGISTRY_TYPECHECK_SHIFT;
+        var dword = new RegistryQueryEntry
+        {
+            Flags = Wdk.RTL_QUERY_REGISTRY_DIRECT | Wdk.RTL_QUERY_REGISTRY_TYPECHECK,
+            Name = name,
+            EntryContext = result,
+            DefaultType = (uint)REG_VALUE_TYPE.REG_DWORD << (int)Wdk.RTL_QUERY_REGISTRY_TYPECHECK_SHIFT,
+        };
         return dword;
     }
 

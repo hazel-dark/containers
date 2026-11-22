@@ -93,10 +93,12 @@ internal sealed unsafe partial class NativeApi
 
         static NativeScratchBuffer<byte> MountPoint(Span<byte> stackBuffer, string linkName, string deviceName)
         {
-            var header = new MountMgrCreatePointInput();
-            header.SymbolicLinkNameOffset = checked((ushort)Unsafe.SizeOf<MountMgrCreatePointInput>());
-            header.SymbolicLinkNameLength = checked((ushort)(linkName.Length * sizeof(char)));
-            header.DeviceNameLength = checked((ushort)(deviceName.Length * sizeof(char)));
+            var header = new MountMgrCreatePointInput
+            {
+                SymbolicLinkNameOffset = checked((ushort)Unsafe.SizeOf<MountMgrCreatePointInput>()),
+                SymbolicLinkNameLength = checked((ushort)(linkName.Length * sizeof(char))),
+                DeviceNameLength = checked((ushort)(deviceName.Length * sizeof(char))),
+            };
             header.DeviceNameOffset = checked((ushort)(header.SymbolicLinkNameOffset + header.SymbolicLinkNameLength));
             return NativeBuffer.Strings(stackBuffer, in header, linkName, deviceName);
         }
@@ -104,8 +106,10 @@ internal sealed unsafe partial class NativeApi
 
     public void SetupPipes(JobSafeHandle job, IReadOnlyList<PipeMapping> pipes)
     {
-        var arrival = new FILE_PIPE_SILO_ARRIVAL_INPUT();
-        arrival.JobHandle = new HANDLE(job.DangerousGetHandle());
+        var arrival = new FILE_PIPE_SILO_ARRIVAL_INPUT
+        {
+            JobHandle = new HANDLE(job.DangerousGetHandle()),
+        };
         using (var host = _platform.OpenDevice(@"\\.\pipe", (uint)GENERIC_ACCESS_RIGHTS.GENERIC_WRITE, 0))
             SiloException.CheckNt(_platform.FsControl(host, Wdk.FSCTL_PIPE_SILO_ARRIVAL, arrival.AsBytes()), "NtFsControlFile(0x118048)");
 
@@ -129,12 +133,14 @@ internal sealed unsafe partial class NativeApi
     internal static NativeScratchBuffer<byte> PipeSymlink(Span<byte> stackBuffer, string name, string target)
     {
         var nameOffset = Unsafe.SizeOf<FILE_PIPE_CREATE_SYMLINK_INPUT>();
-        var header = new FILE_PIPE_CREATE_SYMLINK_INPUT();
-        header.NameOffset = checked((ushort)nameOffset);
-        header.NameLength = checked((ushort)(name.Length * sizeof(char)));
-        header.SubstituteNameOffset = checked((ushort)(nameOffset + name.Length * sizeof(char)));
-        header.SubstituteNameLength = checked((ushort)(target.Length * sizeof(char)));
-        header.Flags = Wdk.FILE_PIPE_SYMLINK_FLAG_GLOBAL;
+        var header = new FILE_PIPE_CREATE_SYMLINK_INPUT
+        {
+            NameOffset = checked((ushort)nameOffset),
+            NameLength = checked((ushort)(name.Length * sizeof(char))),
+            SubstituteNameOffset = checked((ushort)(nameOffset + name.Length * sizeof(char))),
+            SubstituteNameLength = checked((ushort)(target.Length * sizeof(char))),
+            Flags = Wdk.FILE_PIPE_SYMLINK_FLAG_GLOBAL,
+        };
         return NativeBuffer.Strings(stackBuffer, in header, name, target);
     }
 

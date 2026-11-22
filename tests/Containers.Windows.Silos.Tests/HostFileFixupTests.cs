@@ -70,7 +70,7 @@ public sealed class HostFileFixupTests
     }
 
     [Fact]
-    public void SystemRootPassesANulTerminatedUnicodeStringToClass45()
+    public void SystemRootPassesAnAlignedNulTerminatedUnicodeStringToClass45()
     {
         var calls = new Calls();
         new NativeApi(calls).SetSystemRoot(Job, "A\0B");
@@ -132,7 +132,9 @@ public sealed class HostFileFixupTests
         {
             Assert.Equal(45, informationClass);
             Assert.Equal(16u, length);
+            Assert.Equal((nuint)0, (nuint)data & 15);
             var name = *(UNICODE_STRING*)data;
+            Assert.Equal((ushort)2, name.Length);
             SystemRoot = (new string(name.Buffer, 0, name.Length / 2), name.Length, name.MaximumLength);
             return 0;
         }

@@ -47,8 +47,10 @@ internal sealed unsafe partial class NativeApi
                 flags |= (uint)PROCESS_CREATION_FLAGS.CREATE_NO_WINDOW;
             }
 
-            var startup = new StartupInfoEx();
-            startup.Attributes = list;
+            var startup = new StartupInfoEx
+            {
+                Attributes = list,
+            };
             startup.Startup.cb = NativeJobConstants.StartupInfoExSize;
 
             using var commandLine = new NativeScratchBuffer<char>(stackalloc char[256], checked(command.Length + 1));

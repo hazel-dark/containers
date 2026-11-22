@@ -70,6 +70,12 @@ internal readonly ref struct NativeScratchBuffer<T> where T : unmanaged
     private readonly T[]? _rented;
     internal Span<T> Span { get; }
 
+    internal NativeScratchBuffer(Span<T> stackBuffer)
+    {
+        _rented = null;
+        Span = stackBuffer;
+    }
+
     internal NativeScratchBuffer(Span<T> stackBuffer, int length)
     {
         _rented = length > stackBuffer.Length ? ArrayPool<T>.Shared.Rent(length) : null;

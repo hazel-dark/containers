@@ -99,26 +99,30 @@ internal sealed unsafe partial class NativeApi
 
     internal static NativeScratchBuffer<byte> PackHive(Span<byte> stackBuffer, JobSafeHandle job, RegistryHive hive, string mountedPath, string previous, uint previousIsExistingHive)
     {
-        var header = new VrLoadDifferencingHiveHeader();
-        header.Job = new HANDLE(job.DangerousGetHandle());
-        header.NextLayerIsHost = previousIsExistingHive;
-        header.Flags = (hive.InheritTrust ? WcVRegInheritTrust : 0) | (hive.TrustedHive ? WcVRegTrustedHive : 0) | (hive.WriteThrough ? WcVRegWriteThrough : 0);
-        header.LoadFlags = PInvoke.REG_HIVE_NO_RM | (hive.ReadOnly ? (uint)PInvoke.REG_OPEN_READ_ONLY : 0) | (hive.Immutable ? (uint)PInvoke.REG_IMMUTABLE : 0);
-        header.KeyPathLength = checked((ushort)(mountedPath.Length * sizeof(char)));
-        header.HivePathLength = checked((ushort)(hive.FilePath.Length * sizeof(char)));
-        header.NextLayerKeyPathLength = checked((ushort)(previous.Length * sizeof(char)));
-        header.FileAccessToken = new HANDLE(unchecked((nint)hive.FileAccessToken));
+        var header = new VrLoadDifferencingHiveHeader
+        {
+            Job = new HANDLE(job.DangerousGetHandle()),
+            NextLayerIsHost = previousIsExistingHive,
+            Flags = (hive.InheritTrust ? WcVRegInheritTrust : 0) | (hive.TrustedHive ? WcVRegTrustedHive : 0) | (hive.WriteThrough ? WcVRegWriteThrough : 0),
+            LoadFlags = PInvoke.REG_HIVE_NO_RM | (hive.ReadOnly ? (uint)PInvoke.REG_OPEN_READ_ONLY : 0) | (hive.Immutable ? (uint)PInvoke.REG_IMMUTABLE : 0),
+            KeyPathLength = checked((ushort)(mountedPath.Length * sizeof(char))),
+            HivePathLength = checked((ushort)(hive.FilePath.Length * sizeof(char))),
+            NextLayerKeyPathLength = checked((ushort)(previous.Length * sizeof(char))),
+            FileAccessToken = new HANDLE(unchecked((nint)hive.FileAccessToken)),
+        };
         return NativeBuffer.Strings(stackBuffer, in header, mountedPath, hive.FilePath, previous);
     }
 
     internal static NativeScratchBuffer<byte> PackRegistryRedirection(Span<byte> stackBuffer, JobSafeHandle job, RegistryRedirection redirect, string target)
     {
-        var header = new VrCreateNamespaceNodeHeader();
-        header.Job = new HANDLE(job.DangerousGetHandle());
-        header.ContainerPathLength = RegistryStringLength(redirect.Path);
-        header.HostPathLength = RegistryStringLength(target);
-        header.Flags = (redirect.Trusted ? WcVRegTrustedRedirection : 0) | (redirect.ExitNode ? WcVRegExitNodeRedirection : 0);
-        header.AccessMask = redirect.AccessMask;
+        var header = new VrCreateNamespaceNodeHeader
+        {
+            Job = new HANDLE(job.DangerousGetHandle()),
+            ContainerPathLength = RegistryStringLength(redirect.Path),
+            HostPathLength = RegistryStringLength(target),
+            Flags = (redirect.Trusted ? WcVRegTrustedRedirection : 0) | (redirect.ExitNode ? WcVRegExitNodeRedirection : 0),
+            AccessMask = redirect.AccessMask,
+        };
         return NativeBuffer.Strings(stackBuffer, in header, redirect.Path, target);
     }
 
@@ -145,9 +149,11 @@ internal sealed unsafe partial class NativeApi
 
     private nint GetRegistryHandle(SafeFileHandle driver, JobSafeHandle job, uint type)
     {
-        var request = new VrGetVirtualRoot();
-        request.Job = new HANDLE(job.DangerousGetHandle());
-        request.Index = type;
+        var request = new VrGetVirtualRoot
+        {
+            Job = new HANDLE(job.DangerousGetHandle()),
+            Index = type,
+        };
         VrGetVirtualRootResult output = default;
         Ioctl(driver, WcVRegGetRegistryHandle, request.AsBytes(), output.AsBytes());
         return output.Key;
@@ -156,20 +162,23 @@ internal sealed unsafe partial class NativeApi
     public void ModifyRegistryFlags(JobSafeHandle job, uint add, uint remove)
     {
         using var driver = _platform.OpenRegistryDriver();
-        var request = new VrModifyFlags();
-        request.Job = new HANDLE(job.DangerousGetHandle());
-        request.AddFlags = add;
-        request.RemoveFlags = remove;
+        var request = new VrModifyFlags
+        {
+            Job = new HANDLE(job.DangerousGetHandle()),
+            AddFlags = add,
+            RemoveFlags = remove,
+        };
         Ioctl(driver, WcVRegModifyFlags, request.AsBytes());
     }
 
     public void AddRuntimeVirtualKeys(JobSafeHandle job, IReadOnlyList<RuntimeVirtualKey> keys)
     {
         using var driver = _platform.OpenRegistryDriver();
-        Ioctl(driver, WcVRegAddRuntimeVirtualKeys, PackRuntimeVirtualKeys(job, keys));
+        using var input = PackRuntimeVirtualKeys(stackalloc byte[512], job, keys);
+        Ioctl(driver, WcVRegAddRuntimeVirtualKeys, input.Span);
     }
 
-    internal static byte[] PackRuntimeVirtualKeys(JobSafeHandle job, IReadOnlyList<RuntimeVirtualKey> keys)
+    internal static NativeScratchBuffer<byte> PackRuntimeVirtualKeys(Span<byte> stackBuffer, JobSafeHandle job, IReadOnlyList<RuntimeVirtualKey> keys)
     {
         long size = sizeof(VrCreateMultipleNamespaceNodesHeader);
         foreach (var key in keys)
@@ -179,28 +188,33 @@ internal sealed unsafe partial class NativeApi
                 SiloException.CheckNt(RegistryIntegerOverflow, "Size runtime virtual key IOCTL");
         }
 
-        var data = new byte[(int)size];
-        var header = new VrCreateMultipleNamespaceNodesHeader();
-        header.Job = new HANDLE(job.DangerousGetHandle());
-        header.NumNewKeys = (uint)keys.Count;
+        var buffer = new NativeScratchBuffer<byte>(stackBuffer, (int)size);
+        var data = buffer.Span;
+        var header = new VrCreateMultipleNamespaceNodesHeader
+        {
+            Job = new HANDLE(job.DangerousGetHandle()),
+            NumNewKeys = (uint)keys.Count,
+        };
         MemoryMarshal.Write(data, in header);
+        data = data.Slice(sizeof(VrCreateMultipleNamespaceNodesHeader));
 
-        var offset = sizeof(VrCreateMultipleNamespaceNodesHeader);
         foreach (var key in keys)
         {
-            var node = new NamespaceNodeDataHeader();
-            node.AccessMask = key.AccessMask;
-            node.ContainerPathLength = checked((ushort)(key.Path.Length * sizeof(char)));
-            node.HostPathLength = checked((ushort)(key.Target.Length * sizeof(char)));
-            node.Flags = 0;
+            var node = new NamespaceNodeDataHeader
+            {
+                AccessMask = key.AccessMask,
+                ContainerPathLength = checked((ushort)(key.Path.Length * sizeof(char))),
+                HostPathLength = checked((ushort)(key.Target.Length * sizeof(char))),
+                Flags = 0,
+            };
 
-            MemoryMarshal.Write(data.AsSpan(offset), in node);
-            offset += sizeof(NamespaceNodeDataHeader);
-            offset += NativeBuffer.WriteString(data.AsSpan(offset), key.Path);
-            offset += NativeBuffer.WriteString(data.AsSpan(offset), key.Target);
+            MemoryMarshal.Write(data, in node);
+            data = data.Slice(sizeof(NamespaceNodeDataHeader));
+            data = data.Slice(NativeBuffer.WriteString(data, key.Path));
+            data = data.Slice(NativeBuffer.WriteString(data, key.Target));
         }
 
-        return data;
+        return buffer;
     }
 
     private static ushort RegistryStringLength(string value)
