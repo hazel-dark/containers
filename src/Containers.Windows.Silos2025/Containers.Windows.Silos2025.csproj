@@ -28,5 +28,6 @@
         <Compile Include="../Containers.Windows.Silos/SiloException.cs" Link="Shared/SiloException.cs" />
         <Compile Include="../Containers.Windows.Silos/SiloTerminationNotification.cs" Link="Shared/SiloTerminationNotification.cs" />
         <Compile Include="../Containers.Windows.Silos/WindowsSilo.cs" Link="Shared/WindowsSilo.cs" />
+        <Compile Include="../Containers.Windows.Silos/Wcifs*.cs" Link="Shared/%(Filename)%(Extension)" />
     </ItemGroup>
 </Project>

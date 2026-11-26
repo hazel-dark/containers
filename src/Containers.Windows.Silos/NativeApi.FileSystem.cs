@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.InteropServices;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -164,17 +165,28 @@ internal sealed unsafe partial class NativeApi
         }
     }
 
-    private sealed class NativeStrings : IDisposable
+    internal ref struct NativeStrings : IDisposable
     {
-        internal nint[] Pointers { get; }
+        internal nint[] Pooled { get; private set; }
+        internal Span<nint> Pointers { get; private set; }
 
-        internal NativeStrings(IReadOnlyList<string> strings)
+        internal NativeStrings(IReadOnlyList<string?> strings)
         {
-            Pointers = new nint[strings.Count];
+            Pooled = ArrayPool<nint>.Shared.Rent(strings.Count);
+            Pointers = Pooled.AsSpan(0, strings.Count);
             try
             {
-                for (var i = 0; i < strings.Count; i++)
-                    Pointers[i] = Marshal.StringToHGlobalUni(strings[i]);
+                for (var i = 0; i < Pointers.Length; i++)
+                {
+                    var value = strings[i];
+                    if (value is null)
+                        continue;
+
+                    var buffer = (char*)NativeMemory.Alloc((nuint)value.Length + 1, sizeof(char));
+                    Pointers[i] = (nint)buffer;
+                    value.CopyTo(new Span<char>(buffer, value.Length));
+                    buffer[value.Length] = '\0';
+                }
             }
             catch
             {
@@ -185,8 +197,18 @@ internal sealed unsafe partial class NativeApi
 
         public void Dispose()
         {
-            foreach (var p in Pointers)
-                Marshal.FreeHGlobal(p);
+            if (Pooled is null)
+                return;
+            
+            ArrayPool<nint>.Shared.Return(Pooled);
+            
+            for (var i = 0; i < Pointers.Length; i++)
+            {
+                NativeMemory.Free((void*)Pointers[i]);
+                Pointers[i] = 0;
+            }
+
+            this = default;
         }
     }
 }
