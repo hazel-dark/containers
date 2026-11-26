@@ -3,7 +3,6 @@
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <PlatformTarget>x64</PlatformTarget>
         <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
-        <CsWin32RunAsBuildTask>true</CsWin32RunAsBuildTask>
         <RootNamespace>Containers.Windows.Silos</RootNamespace>
         <DefineConstants>$(DefineConstants);WINDOWS_2025</DefineConstants>
     </PropertyGroup>
